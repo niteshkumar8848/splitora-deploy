@@ -1,5 +1,6 @@
 import logging
 import os
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -17,8 +18,15 @@ app = FastAPI(
     version="1.0.0",
 )
 
+def _normalize_origin(origin: str) -> str:
+    parsed = urlparse(origin.strip())
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return origin.strip().rstrip("/")
+
+
 frontend_url = os.getenv("FRONTEND_URL", "")
-allowed_origins = [origin.strip() for origin in frontend_url.split(",") if origin.strip()]
+allowed_origins = [_normalize_origin(origin) for origin in frontend_url.split(",") if origin.strip()]
 if not allowed_origins:
     allowed_origins = ["http://localhost:5173"]
 
