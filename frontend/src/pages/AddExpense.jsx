@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { addExpense, getMembers } from '../api';
-import Footer from '../components/Footer';
 import Navbar from '../components/Navbar';
 
 // Convert number into INR string format.
@@ -143,10 +142,10 @@ function AddExpense() {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="bg-gray-50 min-h-screen">
       <Navbar />
       <main className="max-w-4xl mx-auto px-4 py-6">
-        <div className="section-card">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <h1 className="text-2xl font-bold text-gray-800 mb-1">Add Expense</h1>
           <p className="text-sm text-gray-500 mb-6">Create a new expense and split it among members.</p>
 
@@ -156,11 +155,11 @@ function AddExpense() {
             <p className="text-sm text-gray-500">No members found in this group.</p>
           ) : (
             <form onSubmit={onSubmit} className="space-y-4">
-              <input className="input-field" placeholder="Title" value={form.title} onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))} required />
-              <input className="input-field" type="number" step="0.01" min="0.01" placeholder="Total Amount" value={form.total_amount} onChange={(event) => setForm((prev) => ({ ...prev, total_amount: event.target.value }))} required />
+              <input className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500" placeholder="Title" value={form.title} onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))} required />
+              <input className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500" type="number" step="0.01" min="0.01" placeholder="Total Amount" value={form.total_amount} onChange={(event) => setForm((prev) => ({ ...prev, total_amount: event.target.value }))} required />
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <select className="input-field" value={form.category} onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))}>
+                <select className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500" value={form.category} onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))}>
                   <option>Food</option>
                   <option>Travel</option>
                   <option>Hotel</option>
@@ -168,7 +167,7 @@ function AddExpense() {
                   <option>Utilities</option>
                   <option>Other</option>
                 </select>
-                <select className="input-field" value={form.paid_by} onChange={(event) => setForm((prev) => ({ ...prev, paid_by: event.target.value }))}>
+                <select className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500" value={form.paid_by} onChange={(event) => setForm((prev) => ({ ...prev, paid_by: event.target.value }))}>
                   {members.map((member) => (
                     <option key={member.id} value={member.id}>
                       Paid By: {member.name}
@@ -184,7 +183,7 @@ function AddExpense() {
                     type="button"
                     onClick={() => setForm((prev) => ({ ...prev, split_type: type }))}
                     className={`px-4 py-2 rounded-xl border ${
-                      form.split_type === type ? 'bg-primary text-white border-primary' : 'border-gray-200 text-gray-600 bg-white'
+                      form.split_type === type ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-600'
                     }`}
                   >
                     {type}
@@ -199,7 +198,7 @@ function AddExpense() {
                     <div key={member.id} className="grid grid-cols-2 gap-2 items-center">
                       <label className="text-sm text-gray-700">{member.name}</label>
                       <input
-                        className="input-field"
+                        className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500"
                         type="number"
                         step="0.01"
                         value={percentages[member.id] ?? 0}
@@ -217,7 +216,7 @@ function AddExpense() {
                     <div key={member.id} className="grid grid-cols-2 gap-2 items-center">
                       <label className="text-sm text-gray-700">{member.name}</label>
                       <input
-                        className="input-field"
+                        className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500"
                         type="number"
                         step="0.01"
                         value={customAmounts[member.id] ?? 0}
@@ -246,7 +245,7 @@ function AddExpense() {
               <button
                 type="submit"
                 disabled={submitLoading}
-                className="btn-primary disabled:opacity-60"
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-medium transition-all disabled:opacity-60"
               >
                 {submitLoading ? 'Adding expense...' : 'Add Expense'}
               </button>
@@ -254,7 +253,6 @@ function AddExpense() {
           )}
         </div>
       </main>
-      <Footer />
     </div>
   );
 }

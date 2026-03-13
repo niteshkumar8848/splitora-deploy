@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Wallet } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getMe, loginUser } from '../api';
-import Footer from '../components/Footer';
 import { useAuth } from '../context/AuthContext';
 
 // Render login form and initialize user session.
@@ -39,8 +38,7 @@ function Login() {
   };
 
   return (
-    <div className="page-shell flex flex-col">
-      <div className="flex-1 flex items-center justify-center">
+    <div className="page-shell flex items-center justify-center">
       <div className="w-full max-w-md section-card animate-fade-in">
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-2">
@@ -69,8 +67,6 @@ function Login() {
           </Link>
         </p>
       </div>
-      </div>
-      <Footer />
     </div>
   );
 }

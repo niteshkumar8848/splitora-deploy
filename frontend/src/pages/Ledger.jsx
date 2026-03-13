@@ -3,7 +3,6 @@ import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import jsPDF from 'jspdf';
 import { getBalances, getExpenses, getGroups, reverseExpense } from '../api';
-import Footer from '../components/Footer';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../context/AuthContext';
 
@@ -298,21 +297,21 @@ function Ledger() {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="bg-gray-50 min-h-screen">
       <Navbar />
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         <h1 className="text-2xl font-bold text-gray-800">Ledger</h1>
 
         <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="section-card">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
             <p className="text-sm text-gray-500">Total Group Spent</p>
             <p className="text-xl font-semibold text-gray-800">{formatInr(summary.totalSpent)}</p>
           </div>
-          <div className="section-card">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
             <p className="text-sm text-gray-500">You Paid</p>
             <p className="text-xl font-semibold text-gray-800">{formatInr(summary.youPaid)}</p>
           </div>
-          <div className="section-card">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
             <p className="text-sm text-gray-500">Your Net Balance</p>
             <p className={`text-xl font-semibold ${summary.yourBalance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {formatInr(summary.yourBalance)}
@@ -320,7 +319,7 @@ function Ledger() {
           </div>
         </section>
 
-        <section className="section-card">
+        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
             <div className="flex gap-2">
               {['all', 'expenses', 'reversals', 'settlements'].map((tab) => (
@@ -329,14 +328,14 @@ function Ledger() {
                   type="button"
                   onClick={() => setFilter(tab)}
                   className={`px-4 py-2 rounded-xl border ${
-                    filter === tab ? 'bg-primary text-white border-primary' : 'border-gray-200 text-gray-600 bg-white'
+                    filter === tab ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-600'
                   }`}
                 >
                   {tab[0].toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
-            <button type="button" onClick={exportPdf} className="btn-secondary">
+            <button type="button" onClick={exportPdf} className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-xl">
               Export PDF
             </button>
           </div>
@@ -413,7 +412,6 @@ function Ledger() {
           )}
         </section>
       </main>
-      <Footer />
     </div>
   );
 }

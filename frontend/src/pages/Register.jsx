@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Wallet } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getMe, registerUser } from '../api';
-import Footer from '../components/Footer';
 import { useAuth } from '../context/AuthContext';
 
 // Render registration form and create an authenticated session.
@@ -39,8 +38,7 @@ function Register() {
   };
 
   return (
-    <div className="page-shell flex flex-col">
-      <div className="flex-1 flex items-center justify-center">
+    <div className="page-shell flex items-center justify-center">
       <div className="w-full max-w-md section-card animate-fade-in">
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-2">
@@ -72,8 +70,6 @@ function Register() {
           </Link>
         </p>
       </div>
-      </div>
-      <Footer />
     </div>
   );
 }

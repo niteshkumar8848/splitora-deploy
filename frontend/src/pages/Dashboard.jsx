@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { createGroup, getGroups, joinGroup } from '../api';
-import Footer from '../components/Footer';
 import Modal from '../components/Modal';
 import Navbar from '../components/Navbar';
 import { Button } from '../components/ui/Button';
@@ -221,7 +220,6 @@ function Dashboard() {
           </Button>
         </form>
       </Modal>
-      <Footer />
     </div>
   );
 }
