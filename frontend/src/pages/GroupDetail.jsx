@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { getBalances, getExpenses, getGroups, getMembers } from '../api';
+import Footer from '../components/Footer';
 import Navbar from '../components/Navbar';
 
 // Convert number to INR display string.
@@ -91,13 +92,13 @@ function GroupDetail() {
   };
 
   return (
-    <div className="bg-gray-50 min-h-screen">
+    <div className="min-h-screen">
       <Navbar />
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         {loading ? (
           <div className="text-sm text-gray-500">Loading group...</div>
         ) : !group ? (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          <div className="section-card">
             <p className="text-sm text-gray-500">Group not found.</p>
             <Link className="text-indigo-600 text-sm font-medium" to="/dashboard">
               Back to dashboard
@@ -105,10 +106,10 @@ function GroupDetail() {
           </div>
         ) : (
           <>
-            <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <section className="section-card">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h1 className="text-2xl font-bold text-gray-800">{group.name}</h1>
-                <button type="button" onClick={copyInvite} className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-xl">
+                <button type="button" onClick={copyInvite} className="btn-secondary">
                   Invite Code: {group.invite_code}
                 </button>
               </div>
@@ -125,13 +126,13 @@ function GroupDetail() {
             </section>
 
             <section className="flex flex-wrap gap-2">
-              <button onClick={() => navigate(`/groups/${groupId}/add-expense`)} type="button" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-medium transition-all">➕ Add Expense</button>
-              <button onClick={() => navigate(`/groups/${groupId}/settle`)} type="button" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-medium transition-all">💸 Settle Up</button>
-              <button onClick={() => navigate(`/groups/${groupId}/ledger`)} type="button" className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-xl">📋 Ledger</button>
-              <button onClick={() => navigate(`/groups/${groupId}/analytics`)} type="button" className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-xl">📊 Analytics</button>
+              <button onClick={() => navigate(`/groups/${groupId}/add-expense`)} type="button" className="btn-primary">➕ Add Expense</button>
+              <button onClick={() => navigate(`/groups/${groupId}/settle`)} type="button" className="btn-primary">💸 Settle Up</button>
+              <button onClick={() => navigate(`/groups/${groupId}/ledger`)} type="button" className="btn-secondary">📋 Ledger</button>
+              <button onClick={() => navigate(`/groups/${groupId}/analytics`)} type="button" className="btn-secondary">📊 Analytics</button>
             </section>
 
-            <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <section className="section-card">
               <h2 className="text-xl font-semibold text-gray-800 mb-3">Members</h2>
               {members.length === 0 ? (
                 <p className="text-sm text-gray-500">No members in this group yet.</p>
@@ -153,7 +154,7 @@ function GroupDetail() {
               )}
             </section>
 
-            <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <section className="section-card">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-xl font-semibold text-gray-800">Recent Expenses</h2>
                 <button type="button" onClick={() => navigate(`/groups/${groupId}/ledger`)} className="text-sm text-indigo-600 font-medium">
@@ -179,6 +180,7 @@ function GroupDetail() {
           </>
         )}
       </main>
+      <Footer />
     </div>
   );
 }

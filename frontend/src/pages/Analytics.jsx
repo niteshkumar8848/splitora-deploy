@@ -15,6 +15,7 @@ import {
   YAxis,
 } from 'recharts';
 import { getAnomalies, getBalances, getFairness, getMembers, getSpending, reverseExpense } from '../api';
+import Footer from '../components/Footer';
 import FairnessScore from '../components/FairnessScore';
 import Navbar from '../components/Navbar';
 
@@ -144,7 +145,7 @@ function Analytics() {
   }, [simInput, members, balances]);
 
   return (
-    <div className="bg-gray-50 min-h-screen">
+    <div className="min-h-screen">
       <Navbar />
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         <h1 className="text-2xl font-bold text-gray-800">Analytics</h1>
@@ -153,7 +154,7 @@ function Analytics() {
           <p className="text-sm text-gray-500">Loading analytics...</p>
         ) : (
           <>
-            <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <section className="section-card">
               <h2 className="text-xl font-semibold text-gray-800 mb-4">Spending by Category</h2>
               {spending.length === 0 ? (
                 <p className="text-sm text-gray-500">No spending data available yet.</p>
@@ -173,7 +174,7 @@ function Analytics() {
               )}
             </section>
 
-            <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <section className="section-card">
               <h2 className="text-xl font-semibold text-gray-800 mb-4">Fairness Score</h2>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">
                 <FairnessScore score={fairness.score} label={fairness.label} />
@@ -200,7 +201,7 @@ function Analytics() {
               </div>
             </section>
 
-            <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <section className="section-card">
               <h2 className="text-xl font-semibold text-gray-800 mb-4">Anomaly Alerts</h2>
               {anomalies.length === 0 ? (
                 <div className="bg-green-50 border border-green-100 rounded-xl p-4 text-green-700 text-sm">No suspicious activity ✅</div>
@@ -223,10 +224,10 @@ function Analytics() {
                           {item.severity}
                         </span>
                         <div className="flex gap-2">
-                          <button type="button" className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-xl" onClick={() => markLegitimate(item.expense_id)}>
+                          <button type="button" className="btn-secondary" onClick={() => markLegitimate(item.expense_id)}>
                             Mark Legitimate
                           </button>
-                          <button type="button" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-medium transition-all" onClick={() => reverseAnomalyExpense(item.expense_id)}>
+                          <button type="button" className="btn-primary" onClick={() => reverseAnomalyExpense(item.expense_id)}>
                             Reverse Entry
                           </button>
                         </div>
@@ -237,12 +238,12 @@ function Analytics() {
               )}
             </section>
 
-            <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <section className="section-card">
               <h2 className="text-xl font-semibold text-gray-800 mb-4">Simulation Mode</h2>
               <p className="text-sm text-gray-500 mb-4">This would NOT be saved to database</p>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-                <input className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500" type="number" min="0" step="0.01" placeholder="Amount" value={simInput.amount} onChange={(event) => setSimInput((prev) => ({ ...prev, amount: event.target.value }))} />
-                <select className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500" value={simInput.category} onChange={(event) => setSimInput((prev) => ({ ...prev, category: event.target.value }))}>
+                <input className="input-field" type="number" min="0" step="0.01" placeholder="Amount" value={simInput.amount} onChange={(event) => setSimInput((prev) => ({ ...prev, amount: event.target.value }))} />
+                <select className="input-field" value={simInput.category} onChange={(event) => setSimInput((prev) => ({ ...prev, category: event.target.value }))}>
                   <option>Food</option>
                   <option>Travel</option>
                   <option>Hotel</option>
@@ -250,14 +251,14 @@ function Analytics() {
                   <option>Utilities</option>
                   <option>Other</option>
                 </select>
-                <select className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500" value={simInput.payer} onChange={(event) => setSimInput((prev) => ({ ...prev, payer: event.target.value }))}>
+                <select className="input-field" value={simInput.payer} onChange={(event) => setSimInput((prev) => ({ ...prev, payer: event.target.value }))}>
                   {members.map((member) => (
                     <option value={member.id} key={member.id}>
                       {member.name}
                     </option>
                   ))}
                 </select>
-                <button type="button" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-medium transition-all" onClick={() => setSimInput((prev) => ({ ...prev }))}>
+                <button type="button" className="btn-primary" onClick={() => setSimInput((prev) => ({ ...prev }))}>
                   Simulate
                 </button>
               </div>
@@ -290,6 +291,7 @@ function Analytics() {
           </>
         )}
       </main>
+      <Footer />
     </div>
   );
 }

@@ -20,19 +20,21 @@
     margin: 0;
     font-family: 'Manrope', ui-sans-serif, system-ui, sans-serif;
     background-image:
-      radial-gradient(1200px 400px at 10% -10%, rgba(79, 70, 229, 0.12), transparent),
-      radial-gradient(1000px 380px at 100% -20%, rgba(20, 184, 166, 0.12), transparent);
+      radial-gradient(1200px 500px at 2% -12%, rgba(15, 76, 129, 0.16), transparent),
+      radial-gradient(980px 400px at 100% -15%, rgba(196, 138, 42, 0.14), transparent),
+      linear-gradient(transparent 95%, rgba(17, 24, 39, 0.025) 95%);
+    background-size: auto, auto, 44px 44px;
     background-attachment: fixed;
   }
 
   ::selection {
-    background: rgba(79, 70, 229, 0.2);
+    background: rgba(15, 76, 129, 0.2);
   }
 }
 
 @layer components {
   .glass-card {
-    @apply bg-white border border-white/70 rounded-2xl shadow-soft backdrop-blur-sm;
+    @apply bg-white/90 border border-white/70 rounded-2xl shadow-soft backdrop-blur-sm;
   }
 
   .page-shell {
@@ -44,11 +46,11 @@
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 font-semibold text-primary-foreground bg-primary hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 font-semibold text-primary-foreground bg-gradient-to-r from-primary to-primary-700 hover:from-primary-600 hover:to-primary-700 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed;
   }
 
   .btn-secondary {
-    @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 font-semibold border border-input text-foreground hover:bg-muted transition-colors;
+    @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 font-semibold border border-input text-foreground bg-white/90 hover:bg-muted transition-all duration-200;
   }
 
   .btn-ghost {
@@ -64,6 +66,6 @@
   }
 
   .input-field {
-    @apply w-full rounded-xl border border-input bg-white px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/30;
+    @apply w-full rounded-xl border border-input bg-white px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/35 focus:border-primary/60;
   }
 }

@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
 import { createSettlement, getBalances, getMembers, getSuggested } from '../api';
 import DebtGraph from '../components/DebtGraph';
+import Footer from '../components/Footer';
 import Modal from '../components/Modal';
 import Navbar from '../components/Navbar';
 
@@ -118,12 +119,12 @@ function Settlement() {
   };
 
   return (
-    <div className="bg-gray-50 min-h-screen">
+    <div className="min-h-screen">
       <Navbar />
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         <h1 className="text-2xl font-bold text-gray-800">💸 Settle Up</h1>
 
-        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <section className="section-card grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <p className="text-sm text-gray-500">Without optimization</p>
             <p className="text-lg font-semibold text-gray-800">{stats.beforeCount} transactions needed</p>
@@ -140,7 +141,7 @@ function Settlement() {
 
         <DebtGraph members={members} balances={balanceMap} suggestions={suggestions} mode="after" />
 
-        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+        <section className="section-card">
           <h2 className="text-xl font-semibold text-gray-800 mb-4">Suggested Settlements</h2>
           {loading ? (
             <p className="text-sm text-gray-500">Loading suggestions...</p>
@@ -158,10 +159,10 @@ function Settlement() {
                     <p className="text-sm text-gray-500">UPI: {item.to_upi_id || 'Not provided'}</p>
                   </div>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setQrItem(item)} className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-xl" disabled={!item.to_upi_id}>
+                    <button type="button" onClick={() => setQrItem(item)} className="btn-secondary" disabled={!item.to_upi_id}>
                       QR Code
                     </button>
-                    <button type="button" onClick={() => payNow(item)} disabled={payingId === `${item.from_user_id}-${item.to_user_id}`} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-medium transition-all disabled:opacity-60">
+                    <button type="button" onClick={() => payNow(item)} disabled={payingId === `${item.from_user_id}-${item.to_user_id}`} className="btn-primary disabled:opacity-60">
                       {payingId === `${item.from_user_id}-${item.to_user_id}` ? 'Processing...' : 'Pay Now'}
                     </button>
                   </div>
@@ -171,6 +172,7 @@ function Settlement() {
           )}
         </section>
       </main>
+      <Footer />
 
       <Modal isOpen={Boolean(qrItem)} title="Scan to Pay" onClose={() => setQrItem(null)}>
         {qrItem ? (
