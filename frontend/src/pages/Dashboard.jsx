@@ -134,7 +134,7 @@ function Dashboard() {
             <h2 className="text-3xl font-bold text-foreground mb-4">No groups yet!</h2>
             <p className="text-lg text-muted-foreground mb-8 leading-relaxed">Create your first group to start splitting expenses with friends and family.</p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button size="lg" className="px-12 shadow-glow">➕ Create Group</Button>
+              <Button size="lg" className="px-12 shadow-glow" onClick={() => setShowCreate(true)}>➕ Create Group</Button>
             </div>
           </div>
         ) : (
