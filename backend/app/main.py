@@ -1,71 +1,77 @@
-import logging
-import os
-from urllib.parse import urlparse
-
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.exc import OperationalError
-
-from app.database import Base, engine
-from app.routers import analytics, auth, expenses, gpay, groups, settlements, webhooks
-
-logger = logging.getLogger(__name__)
-
-app = FastAPI(
-    title="Splitora API",
-    description="Financial Transaction Modelling & Settlement System",
-    version="1.0.0",
+from app.routers import (
+    auth,
+    groups,
+    expenses,
+    settlements,
+    analytics,
+    webhooks,
+    gpay
 )
 
-def _normalize_origin(origin: str) -> str:
-    parsed = urlparse(origin.strip())
-    if parsed.scheme and parsed.netloc:
-        return f"{parsed.scheme}://{parsed.netloc}"
-    return origin.strip().rstrip("/")
-
-
-frontend_url = os.getenv("FRONTEND_URL", "")
-allowed_origins = [_normalize_origin(origin) for origin in frontend_url.split(",") if origin.strip()]
-if not allowed_origins:
-    allowed_origins = ["http://localhost:5173"]
+app = FastAPI(
+    title="SplitSmart API",
+    description="Financial Transaction Modelling & Settlement System",
+    version="1.0.0"
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
-app.include_router(auth.router, prefix="/auth", tags=["Auth"])
-app.include_router(groups.router, prefix="/groups", tags=["Groups"])
-app.include_router(expenses.router, tags=["Expenses"])
-app.include_router(settlements.router, tags=["Settlements"])
-app.include_router(analytics.router, tags=["Analytics"])
-app.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
-app.include_router(gpay.router, tags=["GPay Import"])
+# Auth routes -> /auth/register, /auth/login, /auth/me
+app.include_router(
+    auth.router,
+    prefix="/auth",
+    tags=["Auth"]
+)
 
+# Group routes -> /groups, /groups/join, /groups/{id}/members
+app.include_router(
+    groups.router,
+    prefix="/groups",
+    tags=["Groups"]
+)
 
-# Ensure tables exist for local/dev runs when no Alembic revisions are present.
-@app.on_event("startup")
-def startup_create_tables():
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as exc:
-        logger.warning("Database table initialization skipped: %s", exc)
+# Expense routes -> /groups/{id}/expenses, /expenses/{id}/reverse
+app.include_router(
+    expenses.router,
+    tags=["Expenses"]
+)
 
+# Settlement routes -> /groups/{id}/settlements/suggested
+app.include_router(
+    settlements.router,
+    tags=["Settlements"]
+)
 
-# Return a clean 503 response for database connectivity failures.
-@app.exception_handler(OperationalError)
-async def handle_db_operational_error(_: Request, __: OperationalError):
-    return JSONResponse(
-        status_code=503,
-        content={"detail": "Database connection failed. Check PostgreSQL credentials/permissions."},
-    )
+# Analytics routes -> /groups/{id}/analytics/spending etc
+app.include_router(
+    analytics.router,
+    tags=["Analytics"]
+)
 
+# Webhook routes -> /webhooks/razorpay
+app.include_router(
+    webhooks.router,
+    prefix="/webhooks",
+    tags=["Webhooks"]
+)
 
-# Return service health status.
+# GPay import routes -> /gpay/parse-pdf, /gpay/bulk-import
+# CRITICAL: NO prefix here because routes already
+# have /gpay/ at the start inside gpay.py
+app.include_router(
+    gpay.router,
+    tags=["GPay Import"]
+)
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "app": "Splitora"}
+    """Health check endpoint for Render"""
+    return {"status": "ok", "app": "SplitSmart"}
