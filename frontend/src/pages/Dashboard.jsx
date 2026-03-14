@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ArrowUpRight, Building2, CircleDollarSign, HandCoins, Layers3, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { createGroup, getGroups, joinGroup } from '../api';
 import Modal from '../components/Modal';
@@ -86,101 +87,152 @@ function Dashboard() {
   const getBalanceBadge = (value) => {
     const absValue = Math.abs(value);
     if (value > 0.01) {
-      return { 
-        text: `Owes you ${formatInr(value)}`, 
-        cls: 'bg-gradient-to-r from-emerald-500/10 to-emerald-600/10 text-emerald-700 border border-emerald-200 shadow-emerald-200/50' 
+      return {
+        text: `Receivable ${formatInr(value)}`,
+        cls: 'bg-emerald-50 text-emerald-700 border-emerald-200',
       };
     }
     if (value < -0.01) {
-      return { 
-        text: `You owe ${formatInr(absValue)}`, 
-        cls: 'bg-gradient-to-r from-red-500/10 to-red-600/10 text-red-700 border border-red-200 shadow-red-200/50' 
+      return {
+        text: `Payable ${formatInr(absValue)}`,
+        cls: 'bg-rose-50 text-rose-700 border-rose-200',
       };
     }
-    return { 
-      text: 'Balanced ✅', 
-      cls: 'bg-gradient-to-r from-gray-500/10 to-gray-600/10 text-muted-foreground border border-muted shadow-sm' 
+    return {
+      text: 'Balanced',
+      cls: 'bg-slate-100 text-slate-600 border-slate-200',
     };
   };
 
+  const summary = useMemo(() => {
+    const totalGroups = groups.length;
+    const receivable = groups.reduce((sum, group) => {
+      const value = Number(group.my_balance || 0);
+      return value > 0 ? sum + value : sum;
+    }, 0);
+    const payable = groups.reduce((sum, group) => {
+      const value = Number(group.my_balance || 0);
+      return value < 0 ? sum + Math.abs(value) : sum;
+    }, 0);
+    const balancedGroups = groups.filter((group) => Math.abs(Number(group.my_balance || 0)) <= 0.01).length;
+    return { totalGroups, receivable, payable, balancedGroups };
+  }, [groups]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-primary/5 to-accent/10">
+    <div className="min-h-screen">
       <Navbar />
       <main className="max-w-7xl mx-auto px-4 py-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <div className="space-y-2">
-            <h1 className="text-4xl md:text-5xl font-black bg-gradient-to-r from-foreground via-primary to-accent bg-clip-text text-transparent animate-fade-in">
-              Hello <span className="text-primary">{user?.name || 'there'}</span> 👋
-            </h1>
-            <p className="text-xl text-muted-foreground max-w-md">Professional expense splitting made simple</p>
+        <section className="section-card mb-6 animate-fade-in">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-2 max-w-2xl">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Workspace Overview</p>
+              <h1 className="text-3xl md:text-4xl font-extrabold bg-gradient-to-r from-foreground via-primary to-accent bg-clip-text text-transparent">
+                Welcome back, {user?.name || 'there'}
+              </h1>
+              <p className="text-[1rem] text-muted-foreground">Manage all your groups, balances, and settlements from a single professional dashboard.</p>
+            </div>
+            <div className="flex gap-3 flex-wrap">
+              <Button onClick={() => setShowCreate(true)} className="px-6">
+                Create Group
+              </Button>
+              <Button variant="secondary" onClick={() => setShowJoin(true)} className="px-6">
+                Join Group
+              </Button>
+            </div>
           </div>
-          <div className="flex gap-3 flex-wrap">
-            <Button onClick={() => setShowCreate(true)} className="text-lg px-8">
-              ➕ Create Group
-            </Button>
-            <Button variant="secondary" onClick={() => setShowJoin(true)} className="text-lg px-8">
-              👥 Join Group
-            </Button>
+        </section>
+
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+          <div className="section-card">
+            <p className="text-sm text-muted-foreground mb-2 flex items-center gap-2"><Layers3 className="h-4 w-4 text-primary" /> Total Groups</p>
+            <p className="text-2xl font-bold text-foreground">{summary.totalGroups}</p>
           </div>
-        </div>
+          <div className="section-card">
+            <p className="text-sm text-muted-foreground mb-2 flex items-center gap-2"><CircleDollarSign className="h-4 w-4 text-emerald-600" /> Receivable</p>
+            <p className="text-2xl font-bold text-emerald-700">{formatInr(summary.receivable)}</p>
+          </div>
+          <div className="section-card">
+            <p className="text-sm text-muted-foreground mb-2 flex items-center gap-2"><HandCoins className="h-4 w-4 text-rose-600" /> Payable</p>
+            <p className="text-2xl font-bold text-rose-700">{formatInr(summary.payable)}</p>
+          </div>
+          <div className="section-card">
+            <p className="text-sm text-muted-foreground mb-2 flex items-center gap-2"><Users className="h-4 w-4 text-slate-600" /> Balanced Groups</p>
+            <p className="text-2xl font-bold text-foreground">{summary.balancedGroups}</p>
+          </div>
+        </section>
 
         {loading ? (
-          <div className="text-sm text-gray-500">Loading groups...</div>
+          <div className="section-card text-sm text-muted-foreground">Loading groups...</div>
         ) : groups.length === 0 ? (
-          <div className="glass-card p-16 text-center max-w-2xl mx-auto animate-fade-in">
-            <div className="w-28 h-28 mx-auto mb-8 rounded-3xl bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center">
-              <span className="text-4xl">🎉</span>
+          <div className="section-card p-14 text-center max-w-3xl mx-auto animate-fade-in">
+            <div className="w-24 h-24 mx-auto mb-6 rounded-3xl bg-gradient-to-br from-primary/15 to-accent/15 flex items-center justify-center">
+              <Building2 className="h-10 w-10 text-primary" />
             </div>
-            <h2 className="text-3xl font-bold text-foreground mb-4">No groups yet!</h2>
-            <p className="text-lg text-muted-foreground mb-8 leading-relaxed">Create your first group to start splitting expenses with friends and family.</p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button size="lg" className="px-12 shadow-glow" onClick={() => setShowCreate(true)}>➕ Create Group</Button>
-            </div>
+            <h2 className="text-3xl font-bold text-foreground mb-3">No Active Groups Yet</h2>
+            <p className="text-[1rem] text-muted-foreground mb-8 leading-relaxed">Create your first group to start tracking shared expenses with structure and clarity.</p>
+            <Button size="lg" className="px-10" onClick={() => setShowCreate(true)}>
+              Create Group
+            </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {groups.map((group) => {
-              const badge = getBalanceBadge(Number(group.my_balance || 0));
-              return (
-                <div className="glass-card group cursor-pointer overflow-hidden hover:shadow-glow animate-fade-in hover:-translate-y-2 transition-all duration-300" onClick={() => navigate(`/groups/${group.id}`)}>
-                  <div className="p-7 pb-4">
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 group-hover:scale-110 transition-transform"></div>
-                      <div>
-                        <h3 className="font-bold text-xl text-foreground group-hover:text-primary transition-colors">{group.name}</h3>
-                        <p className="text-sm text-muted-foreground">{group.member_count} members</p>
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-foreground">Your Groups</h2>
+              <p className="text-sm text-muted-foreground">{groups.length} active workspaces</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {groups.map((group) => {
+                const badge = getBalanceBadge(Number(group.my_balance || 0));
+                return (
+                  <article key={group.id} className="section-card group hover:-translate-y-1 transition-all duration-200">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="font-bold text-lg text-foreground truncate">{group.name}</h3>
+                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{group.description || 'No description added.'}</p>
                       </div>
+                      <span className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary/15 to-accent/20 text-primary inline-flex items-center justify-center font-semibold">
+                        {group.name?.slice(0, 1)?.toUpperCase() || 'G'}
+                      </span>
                     </div>
-                  </div>
-                  <div className="px-7 pb-7 pt-0">
-                    <div className={`inline-flex px-4 py-2 rounded-xl text-sm font-semibold group-hover:scale-105 transition-transform ${badge.cls === 'bg-green-100 text-green-700' ? 'bg-emerald-100 text-emerald-700 shadow-md shadow-emerald-200/50' : badge.cls === 'bg-red-100 text-red-700' ? 'bg-red-100 text-red-700 shadow-md shadow-red-200/50' : 'bg-muted text-muted-foreground'}`}>
-                      {badge.text}
+                    <div className="mt-4 flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">{group.member_count} members</p>
+                      <span className={`text-xs font-semibold px-3 py-1.5 rounded-full border ${badge.cls}`}>
+                        {badge.text}
+                      </span>
                     </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/groups/${group.id}`)}
+                      className="mt-5 w-full btn-secondary justify-between"
+                    >
+                      Open Group
+                      <ArrowUpRight className="h-4 w-4" />
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
         )}
       </main>
 
       <Modal isOpen={showCreate} title="Create Group" onClose={() => setShowCreate(false)}>
         <form className="space-y-4" onSubmit={handleCreate}>
           <input
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500"
+            className="input-field"
             placeholder="Group Name"
             value={createForm.name}
             onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
             required
           />
           <input
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500"
+            className="input-field"
             placeholder="Description (optional)"
             value={createForm.description}
             onChange={(event) => setCreateForm((prev) => ({ ...prev, description: event.target.value }))}
           />
           <input
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500"
+            className="input-field"
             type="number"
             step="0.01"
             min="0"
@@ -190,10 +242,10 @@ function Dashboard() {
           />
           {createdCode && (
             <div className="glass-card bg-gradient-to-r from-emerald-50 to-emerald-100 border-emerald-200 p-4 animate-pulse-soft">
-              <p className="font-semibold text-emerald-800 mb-1">✅ Group created!</p>
+              <p className="font-semibold text-emerald-800 mb-1">Group created successfully</p>
               <p className="text-sm text-emerald-700 flex items-center gap-2">
                 <span className="font-mono bg-emerald-200 px-2 py-1 rounded-lg text-xs">{createdCode}</span>
-                Share this code with friends
+                Share this code with your members
               </p>
             </div>
           )}
@@ -207,7 +259,7 @@ function Dashboard() {
         <form className="space-y-4" onSubmit={handleJoin}>
           <div className="relative">
             <input
-              className="w-full pl-12 pr-4 py-4 rounded-2xl border border-input bg-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className="input-field pl-12 pr-4 py-4"
               placeholder="Enter invite code (ABC123)"
               value={inviteCode}
               onChange={(event) => setInviteCode(event.target.value.toUpperCase())}

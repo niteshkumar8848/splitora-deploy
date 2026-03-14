@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, User, LogOut, Wallet } from 'lucide-react';
+import { Building2, Menu, User, LogOut, Wallet } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/Button';
 import { useState } from 'react';
@@ -18,15 +18,22 @@ function Navbar() {
   return (
     <nav className="glass-card border-b-0 backdrop-blur-md sticky top-0 z-50 shadow-soft">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="hidden md:flex items-center justify-between border-b border-border/60 py-2">
+          <p className="text-[0.7rem] uppercase tracking-[0.18em] text-muted-foreground">Urban Class Workspace</p>
+          <p className="text-[0.75rem] text-muted-foreground">Structured Shared Expense Management</p>
+        </div>
         <div className="flex justify-between items-center py-4 md:py-3">
           {/* Logo */}
           <Link to="/dashboard" className="group flex items-center gap-3">
-            <span className="h-10 w-10 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 text-white inline-flex items-center justify-center shadow-soft">
+            <span className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary to-primary-700 text-white inline-flex items-center justify-center shadow-soft">
               <Wallet className="h-5 w-5" />
             </span>
-            <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent group-hover:scale-105 transition-transform">
-              Splitora
-            </h1>
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent group-hover:scale-105 transition-transform">
+                Splitora
+              </h1>
+              <p className="hidden md:block text-[0.74rem] text-muted-foreground -mt-1">Ledger-grade group expense app</p>
+            </div>
           </Link>
 
           {/* Desktop Menu */}
@@ -46,6 +53,10 @@ function Navbar() {
               </span>
               <span className="text-sm text-muted-foreground font-medium">{user?.name}</span>
             </Link>
+            <span className="hidden lg:inline-flex items-center gap-1.5 text-[0.86rem] text-muted-foreground px-2">
+              <Building2 className="h-4 w-4" />
+              {user?.name}
+            </span>
             <Button variant="secondary" onClick={logout} className="gap-1.5">
               <LogOut className="h-4 w-4" />
               Logout
