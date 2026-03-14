@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import { useAuth } from '../context/AuthContext'
 import { getExpenses, getBalances } from '../api'
 
@@ -98,6 +100,257 @@ export default function Ledger() {
       .toUpperCase()
   }
 
+  const downloadPDF = () => {
+    /**
+     * Generates and downloads a professional PDF ledger.
+     * Uses jsPDF for document creation and
+     * jspdf-autotable for the transaction table.
+     */
+
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    })
+
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const margin = 15
+    let yPos = margin
+
+    // ── COLORS ──────────────────────────────────────
+    const INDIGO = [79, 70, 229] // #4F46E5
+    const DARK = [31, 41, 55] // #1F2937
+    const GRAY = [107, 114, 128] // #6B7280
+    const LIGHT = [249, 250, 251] // #F9FAFB
+    const RED = [239, 68, 68] // #EF4444
+    const GREEN = [34, 197, 94] // #22C55E
+    const WHITE = [255, 255, 255]
+    const BORDER = [229, 231, 235] // #E5E7EB
+
+    // ── HELPER: safe number format ───────────────────
+    const fmtAmt = (val) => {
+      const n = parseFloat(val)
+      return Number.isNaN(n) ? '₹0.00' : `₹${n.toFixed(2)}`
+    }
+
+    const fmtDate = (dateStr) => {
+      if (!dateStr) return '—'
+      try {
+        return new Date(dateStr).toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        })
+      } catch {
+        return dateStr
+      }
+    }
+
+    // ── SECTION 1: HEADER ────────────────────────────
+
+    // Indigo header background
+    doc.setFillColor(...INDIGO)
+    doc.rect(0, 0, pageWidth, 40, 'F')
+
+    // App name
+    doc.setTextColor(...WHITE)
+    doc.setFontSize(22)
+    doc.setFont('helvetica', 'bold')
+    doc.text('SplitSmart', margin, 16)
+
+    // Subtitle
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'normal')
+    doc.text('Transaction Ledger Report', margin, 24)
+
+    // Generated date (top right)
+    const now = new Date().toLocaleString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    doc.setFontSize(8)
+    doc.text(`Generated: ${now}`, pageWidth - margin, 24, { align: 'right' })
+
+    // Team name (top right bottom)
+    doc.text('Logic Lords — T021', pageWidth - margin, 30, { align: 'right' })
+
+    yPos = 50
+
+    // ── SECTION 2: SUMMARY BOX ───────────────────────
+
+    // Summary background
+    doc.setFillColor(...LIGHT)
+    doc.setDrawColor(...BORDER)
+    doc.roundedRect(margin, yPos, pageWidth - margin * 2, 36, 3, 3, 'FD')
+
+    // Summary heading
+    doc.setTextColor(...DARK)
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.text('FINANCIAL SUMMARY', margin + 5, yPos + 8)
+
+    // Summary values in 4 columns
+    const summaryItems = [
+      {
+        label: 'Total Group Spent',
+        value: fmtAmt(totalSpent),
+        color: DARK,
+      },
+      {
+        label: 'You Paid',
+        value: fmtAmt(youPaid),
+        color: GREEN,
+      },
+      {
+        label: 'Your Balance',
+        value: `${parseFloat(myBalance) >= 0 ? '+' : ''}${fmtAmt(Math.abs(myBalance))}`,
+        color: parseFloat(myBalance) >= 0 ? GREEN : RED,
+      },
+      {
+        label: 'Total Entries',
+        value: `${safeExpenses.length} expenses`,
+        color: DARK,
+      },
+    ]
+
+    const colW = (pageWidth - margin * 2 - 10) / 4
+    summaryItems.forEach((item, i) => {
+      const x = margin + 5 + i * colW
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(11)
+      doc.setTextColor(...item.color)
+      doc.text(item.value, x, yPos + 22)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7)
+      doc.setTextColor(...GRAY)
+      doc.text(item.label, x, yPos + 29)
+    })
+
+    yPos += 46
+
+    // ── SECTION 3: TRANSACTION TABLE ─────────────────
+
+    doc.setTextColor(...DARK)
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.text('TRANSACTION HISTORY', margin, yPos)
+    yPos += 6
+
+    // Build table rows
+    const safeFiltered = Array.isArray(filtered) ? filtered : safeExpenses
+
+    const tableRows = safeFiltered.map((exp, idx) => {
+      const myShare = getMyShare(exp)
+      const isRev = !!exp?.is_reversal
+      const amount = parseFloat(exp?.total_amount || 0)
+
+      return [
+        idx + 1,
+        fmtDate(exp?.created_at),
+        exp?.title || 'Untitled',
+        exp?.category || 'Other',
+        exp?.paid_by_name || 'Unknown',
+        isRev ? `-${fmtAmt(amount)}` : fmtAmt(amount),
+        myShare !== 0 ? fmtAmt(Math.abs(myShare)) : '—',
+        isRev ? 'REVERSED' : 'ACTIVE',
+      ]
+    })
+
+    autoTable(doc, {
+      startY: yPos,
+      margin: { left: margin, right: margin },
+      head: [['#', 'Date', 'Description', 'Category', 'Paid By', 'Amount', 'Your Share', 'Status']],
+      body: tableRows,
+      theme: 'grid',
+      styles: {
+        fontSize: 8,
+        cellPadding: 3,
+        textColor: DARK,
+        font: 'helvetica',
+      },
+      headStyles: {
+        fillColor: INDIGO,
+        textColor: WHITE,
+        fontStyle: 'bold',
+        fontSize: 8,
+        halign: 'left',
+      },
+      columnStyles: {
+        0: { cellWidth: 8, halign: 'center' },
+        1: { cellWidth: 22 },
+        2: { cellWidth: 42 },
+        3: { cellWidth: 22 },
+        4: { cellWidth: 28 },
+        5: { cellWidth: 20, halign: 'right', fontStyle: 'bold' },
+        6: { cellWidth: 20, halign: 'right' },
+        7: { cellWidth: 18, halign: 'center' },
+      },
+      alternateRowStyles: {
+        fillColor: [248, 249, 250],
+      },
+      didParseCell: (data) => {
+        // Red background for reversed rows
+        const rowData = tableRows[data.row.index]
+        if (rowData && rowData[7] === 'REVERSED') {
+          data.cell.styles.fillColor = [254, 242, 242]
+          data.cell.styles.textColor = [185, 28, 28]
+        }
+        // Status cell styling
+        if (data.column.index === 7) {
+          if (data.cell.raw === 'REVERSED') {
+            data.cell.styles.textColor = [185, 28, 28]
+            data.cell.styles.fontStyle = 'bold'
+          } else if (data.cell.raw === 'ACTIVE') {
+            data.cell.styles.textColor = [22, 163, 74]
+            data.cell.styles.fontStyle = 'bold'
+          }
+        }
+        // Amount column — red if negative
+        if (data.column.index === 5) {
+          const val = String(data.cell.raw || '')
+          if (val.startsWith('-')) {
+            data.cell.styles.textColor = RED
+          }
+        }
+        // Your Share column — red
+        if (data.column.index === 6 && data.cell.raw !== '—') {
+          data.cell.styles.textColor = RED
+        }
+      },
+      didDrawPage: (data) => {
+        // ── FOOTER on every page ──────────────────
+        const footerY = pageHeight - 10
+        doc.setFontSize(7)
+        doc.setTextColor(...GRAY)
+        doc.setFont('helvetica', 'normal')
+
+        // Left: branding
+        doc.text('Generated by SplitSmart — Logic Lords T021', margin, footerY)
+
+        // Center: timestamp
+        doc.text(now, pageWidth / 2, footerY, { align: 'center' })
+
+        // Right: page number
+        doc.text(`Page ${data.pageNumber}`, pageWidth - margin, footerY, { align: 'right' })
+
+        // Footer line
+        doc.setDrawColor(...BORDER)
+        doc.setLineWidth(0.3)
+        doc.line(margin, footerY - 3, pageWidth - margin, footerY - 3)
+      },
+    })
+
+    // ── SAVE PDF ─────────────────────────────────────
+    const filename = `splitsmart_ledger_${new Date().toISOString().split('T')[0]}.pdf`
+
+    doc.save(filename)
+    toast.success('📄 Ledger downloaded!')
+  }
+
   return (
     <div className="pt-20 bg-gray-50 min-h-screen">
       <div className="max-w-2xl mx-auto p-6">
@@ -108,7 +361,22 @@ export default function Ledger() {
           {'\u2190'} Back to Group
         </button>
 
-        <h1 className="text-2xl font-bold text-gray-800 mb-6">{'\ud83d\udccb'} Ledger</h1>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold text-gray-800">{'\ud83d\udccb'} Ledger</h1>
+          <button
+            onClick={downloadPDF}
+            disabled={loading || safeExpenses.length === 0}
+            className="flex items-center gap-2
+                   bg-indigo-600 hover:bg-indigo-700
+                   text-white px-4 py-2 rounded-xl
+                   text-sm font-medium transition-all
+                   disabled:opacity-50
+                   disabled:cursor-not-allowed"
+          >
+            <span>{'\u2b07\ufe0f'}</span>
+            Download PDF
+          </button>
+        </div>
 
         {loading && (
           <div className="space-y-3">
