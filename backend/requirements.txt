@@ -11,3 +11,4 @@ razorpay
 httpx
 pydantic[email]
 pdfplumber
+python-multipart
