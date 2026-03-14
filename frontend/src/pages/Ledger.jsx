@@ -1,22 +1,22 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import jsPDF from 'jspdf';
-import { getBalances, getExpenses, getGroups, reverseExpense } from '../api';
+import { getBalances, getExpenses, getGroups, getSettlementHistory, reverseExpense } from '../api';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../context/AuthContext';
 
-// Convert number to INR display format.
+// Format a number as INR currency for UI display.
 function formatInr(value) {
   return `₹${Number(value || 0).toFixed(2)}`;
 }
 
-// Convert number to PDF-safe INR format.
+// Format a number as INR currency for PDF-safe text.
 function formatPdfInr(value) {
   return `INR ${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// Build ledger entries from expense records.
+// Convert expense rows into accounting-style ledger debit/credit entries.
 function buildLedgerEntries(expenses) {
   const rows = [];
   expenses.forEach((expense) => {
@@ -30,7 +30,7 @@ function buildLedgerEntries(expenses) {
           description: `${split.user_name} share for ${expense.title}`,
           debit: Number(split.share_amount || 0),
           credit: 0,
-          status: expense.is_reversal ? 'REVERSED' : 'ACTIVE',
+          status: 'ACTIVE',
           type: 'expense',
           isReversal: false,
           expense,
@@ -43,7 +43,7 @@ function buildLedgerEntries(expenses) {
         description: `${expense.paid_by_name} paid for ${expense.title}`,
         debit: 0,
         credit: Number(expense.total_amount || 0),
-        status: expense.is_reversal ? 'REVERSED' : 'ACTIVE',
+        status: 'ACTIVE',
         type: 'expense',
         isReversal: false,
         expense,
@@ -85,30 +85,33 @@ function buildLedgerEntries(expenses) {
   });
 }
 
-// Render ledger with accounting-style transaction table.
+// Render group ledger, summaries, and confirmed settlement history.
 function Ledger() {
   const { groupId } = useParams();
   const { user } = useAuth();
   const [groupName, setGroupName] = useState('Group Ledger');
   const [expenses, setExpenses] = useState([]);
   const [balances, setBalances] = useState([]);
+  const [settlements, setSettlements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
   const [filter, setFilter] = useState('all');
 
-  // Load ledger expenses and balance summaries.
+  // Fetch groups, expenses, balances, and confirmed settlements.
   const loadData = async () => {
     setLoading(true);
     try {
-      const [groupsRes, expensesRes, balancesRes] = await Promise.all([
+      const [groupsRes, expensesRes, balancesRes, settlementsRes] = await Promise.all([
         getGroups(),
         getExpenses(groupId),
         getBalances(groupId),
+        getSettlementHistory(groupId),
       ]);
       const group = (groupsRes.data || []).find((item) => item.id === groupId);
       setGroupName(group?.name || 'Group Ledger');
       setExpenses(expensesRes.data || []);
       setBalances(balancesRes.data || []);
+      setSettlements(settlementsRes.data || []);
     } catch (error) {
       toast.error(error?.response?.data?.detail || 'Failed to load ledger');
     } finally {
@@ -116,33 +119,38 @@ function Ledger() {
     }
   };
 
-  // Fetch ledger data on mount.
+  // Reload ledger datasets whenever group context changes.
   useEffect(() => {
     loadData();
   }, [groupId]);
 
-  // Build all ledger rows from current expenses.
+  // Build all ledger rows derived from expense data.
   const ledgerRows = useMemo(() => buildLedgerEntries(expenses), [expenses]);
 
-  // Apply selected filter to ledger rows.
+  // Filter ledger rows by chosen tab.
   const filteredRows = useMemo(() => {
     if (filter === 'all') return ledgerRows;
     if (filter === 'expenses') return ledgerRows.filter((row) => row.type === 'expense');
     if (filter === 'reversals') return ledgerRows.filter((row) => row.type === 'reversal');
-    return [];
+    return ledgerRows;
   }, [ledgerRows, filter]);
 
-  // Calculate summary totals for stat cards.
+  // Calculate summary metrics including settled and outstanding amounts.
   const summary = useMemo(() => {
     const totalSpent = expenses.filter((item) => !item.is_reversal).reduce((sum, item) => sum + Number(item.total_amount || 0), 0);
     const youPaid = expenses
       .filter((item) => item.paid_by_name === user?.name && !item.is_reversal)
       .reduce((sum, item) => sum + Number(item.total_amount || 0), 0);
     const yourBalance = Number(balances.find((item) => item.user_id === user?.id)?.balance || 0);
-    return { totalSpent, youPaid, yourBalance };
-  }, [expenses, balances, user]);
+    const totalSettled = settlements.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const totalOwed = balances
+      .filter((item) => Number(item.balance || 0) < -0.01)
+      .reduce((sum, item) => sum + Math.abs(Number(item.balance || 0)), 0);
+    const outstanding = Math.max(0, Number((totalOwed - totalSettled).toFixed(2)));
+    return { totalSpent, youPaid, yourBalance, totalSettled, outstanding };
+  }, [expenses, balances, settlements, user]);
 
-  // Export ledger rows and summary to PDF document.
+  // Export filtered ledger rows and summary stats into a PDF report.
   const exportPdf = () => {
     const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
     const pageWidth = pdf.internal.pageSize.getWidth();
@@ -156,14 +164,14 @@ function Ledger() {
       balance: { x: 178, w: 20 },
     };
 
-    // Draw common branded header for every page.
+    // Draw report header on each page.
     const drawPageHeader = () => {
       pdf.setFillColor(79, 70, 229);
       pdf.rect(0, 0, pageWidth, 20, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFont('helvetica', 'bold');
       pdf.setFontSize(12);
-      pdf.text('Splitora', margin, 8);
+      pdf.text('SplitSmart', margin, 8);
       pdf.setFont('helvetica', 'normal');
       pdf.setFontSize(9);
       pdf.text('Smart Expense Ledger Statement', margin, 14);
@@ -180,7 +188,7 @@ function Ledger() {
       pdf.line(margin, 36, pageWidth - margin, 36);
     };
 
-    // Draw a metric card in summary row.
+    // Draw one compact metric box in summary row.
     const drawMetricCard = (x, y, w, label, value, valueColor = [15, 23, 42]) => {
       pdf.setFillColor(248, 250, 252);
       pdf.setDrawColor(226, 232, 240);
@@ -195,7 +203,7 @@ function Ledger() {
       pdf.text(value, x + 2.5, y + 12.5);
     };
 
-    // Draw table header row.
+    // Draw column headers for the ledger table.
     const drawTableHeader = (y) => {
       pdf.setFillColor(241, 245, 249);
       pdf.rect(margin, y, pageWidth - margin * 2, 7, 'F');
@@ -214,15 +222,8 @@ function Ledger() {
     const boxGap = 4;
     const boxWidth = (pageWidth - margin * 2 - boxGap * 2) / 3;
     drawMetricCard(margin, 40, boxWidth, 'Total Group Spent', formatPdfInr(summary.totalSpent));
-    drawMetricCard(margin + boxWidth + boxGap, 40, boxWidth, 'You Paid', formatPdfInr(summary.youPaid));
-    drawMetricCard(
-      margin + (boxWidth + boxGap) * 2,
-      40,
-      boxWidth,
-      'Your Net Balance',
-      formatPdfInr(summary.yourBalance),
-      summary.yourBalance >= 0 ? [22, 163, 74] : [220, 38, 38]
-    );
+    drawMetricCard(margin + boxWidth + boxGap, 40, boxWidth, 'Total Settled', formatPdfInr(summary.totalSettled), [22, 163, 74]);
+    drawMetricCard(margin + (boxWidth + boxGap) * 2, 40, boxWidth, 'Outstanding', formatPdfInr(summary.outstanding), [220, 38, 38]);
 
     let y = 62;
     drawTableHeader(y);
@@ -270,7 +271,7 @@ function Ledger() {
     pdf.setTextColor(55, 48, 163);
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(9);
-    pdf.text(`Optimization Summary: ${expenses.length} expense entries analyzed.`, margin + 2.5, y + 10.3);
+    pdf.text('Optimization-enabled settlement and ledger summary included.', margin + 2.5, y + 10.3);
 
     const totalPages = pdf.getNumberOfPages();
     for (let page = 1; page <= totalPages; page += 1) {
@@ -279,13 +280,13 @@ function Ledger() {
       pdf.setFontSize(8);
       pdf.setTextColor(100, 116, 139);
       pdf.text(`Page ${page} of ${totalPages}`, pageWidth - margin, pageHeight - 8, { align: 'right' });
-      pdf.text('Generated by Splitora Ledger Engine', margin, pageHeight - 8);
+      pdf.text('Generated by SplitSmart Ledger Engine', margin, pageHeight - 8);
     }
 
     pdf.save(`ledger-${groupId}.pdf`);
   };
 
-  // Reverse a selected expense and refresh ledger.
+  // Reverse an expense and refresh the ledger datasets.
   const onReverseExpense = async (expenseId) => {
     try {
       await reverseExpense(expenseId);
@@ -302,7 +303,7 @@ function Ledger() {
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         <h1 className="text-2xl font-bold text-gray-800">Ledger</h1>
 
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <section className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
             <p className="text-sm text-gray-500">Total Group Spent</p>
             <p className="text-xl font-semibold text-gray-800">{formatInr(summary.totalSpent)}</p>
@@ -313,16 +314,22 @@ function Ledger() {
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
             <p className="text-sm text-gray-500">Your Net Balance</p>
-            <p className={`text-xl font-semibold ${summary.yourBalance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {formatInr(summary.yourBalance)}
-            </p>
+            <p className={`text-xl font-semibold ${summary.yourBalance >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatInr(summary.yourBalance)}</p>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm border border-green-200 p-6">
+            <p className="text-sm text-gray-500">Total Settled</p>
+            <p className="text-xl font-semibold text-green-700">{formatInr(summary.totalSettled)}</p>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm border border-amber-200 p-6">
+            <p className="text-sm text-gray-500">Outstanding</p>
+            <p className="text-xl font-semibold text-amber-700">{formatInr(summary.outstanding)}</p>
           </div>
         </section>
 
         <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
             <div className="flex gap-2">
-              {['all', 'expenses', 'reversals', 'settlements'].map((tab) => (
+              {['all', 'expenses', 'reversals'].map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -360,8 +367,8 @@ function Ledger() {
                 </thead>
                 <tbody>
                   {filteredRows.map((row) => (
-                    <>
-                      <tr key={row.id} className={`${row.isReversal ? 'border-l-4 border-red-400' : ''} border-b border-gray-50`}>
+                    <Fragment key={row.id}>
+                      <tr className={`${row.isReversal ? 'border-l-4 border-red-400' : ''} border-b border-gray-50`}>
                         <td className="py-2 pr-4">{row.date}</td>
                         <td className="py-2 pr-4">{row.description}</td>
                         <td className="py-2 pr-4">{row.debit ? formatInr(row.debit) : '-'}</td>
@@ -380,7 +387,7 @@ function Ledger() {
                           >
                             {expanded[row.expenseId] ? 'Hide' : 'Expand'}
                           </button>
-                          {!row.expense.is_reversal && (
+                          {!row.expense.is_reversal ? (
                             <button
                               type="button"
                               onClick={() => onReverseExpense(row.expenseId)}
@@ -388,10 +395,10 @@ function Ledger() {
                             >
                               Reverse
                             </button>
-                          )}
+                          ) : null}
                         </td>
                       </tr>
-                      {expanded[row.expenseId] && (
+                      {expanded[row.expenseId] ? (
                         <tr className="bg-gray-50">
                           <td colSpan="7" className="py-2 px-2">
                             <div className="text-xs text-gray-600 space-y-1">
@@ -403,11 +410,35 @@ function Ledger() {
                             </div>
                           </td>
                         </tr>
-                      )}
-                    </>
+                      ) : null}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </section>
+
+        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4">✅ Confirmed Settlements</h2>
+          {loading ? (
+            <p className="text-sm text-gray-500">Loading confirmed settlements...</p>
+          ) : settlements.length === 0 ? (
+            <p className="text-sm text-gray-500">No settled payments yet</p>
+          ) : (
+            <div className="space-y-3">
+              {settlements.map((item) => (
+                <div key={item.id} className="rounded-xl border border-green-200 border-l-4 border-l-green-500 bg-green-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm text-gray-800">
+                      ✅ <span className="font-semibold">{item.from_user_name}</span> paid <span className="font-semibold">{item.to_user_name}</span>{' '}
+                      <span className="font-bold text-green-700">{formatInr(item.amount)}</span>
+                    </p>
+                    <span className="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">CONFIRMED</span>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">{new Date(item.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} • Razorpay • CONFIRMED</p>
+                </div>
+              ))}
             </div>
           )}
         </section>

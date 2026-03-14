@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { getAnomalies, getBalances, getFairness, getMembers, getSpending, reverseExpense } from '../api';
+import { getAnomalies, getBalances, getFairness, getMembers, getSpending, getSuggested, reverseExpense } from '../api';
 import FairnessScore from '../components/FairnessScore';
 import Navbar from '../components/Navbar';
 
@@ -57,19 +57,21 @@ function Analytics() {
   const [anomalies, setAnomalies] = useState([]);
   const [members, setMembers] = useState([]);
   const [balances, setBalances] = useState([]);
+  const [algoStats, setAlgoStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [simInput, setSimInput] = useState({ amount: '', category: 'Food', payer: '' });
 
-  // Load analytics and balance datasets.
+  // Load analytics, balances, and optimization stats datasets.
   const loadData = async () => {
     setLoading(true);
     try {
-      const [spendingRes, fairnessRes, anomaliesRes, membersRes, balancesRes] = await Promise.all([
+      const [spendingRes, fairnessRes, anomaliesRes, membersRes, balancesRes, suggestedRes] = await Promise.all([
         getSpending(groupId),
         getFairness(groupId),
         getAnomalies(groupId),
         getMembers(groupId),
         getBalances(groupId),
+        getSuggested(groupId),
       ]);
       const memberList = membersRes.data || [];
       setSpending(spendingRes.data || []);
@@ -77,6 +79,7 @@ function Analytics() {
       setAnomalies(anomaliesRes.data || []);
       setMembers(memberList);
       setBalances(balancesRes.data || []);
+      setAlgoStats(suggestedRes.data?.stats || null);
       if (memberList[0]) {
         setSimInput((prev) => ({ ...prev, payer: prev.payer || memberList[0].id }));
       }
@@ -143,6 +146,15 @@ function Analytics() {
     return { before, after, beforeCount, afterCount };
   }, [simInput, members, balances]);
 
+  // Derive helper metrics from algorithm stats for summary cards.
+  const algorithmMetrics = useMemo(() => {
+    const rawDebts = Number(algoStats?.without_optimization || 0);
+    const optimizedTo = Number(algoStats?.with_optimization || 0);
+    const savedPayments = Math.max(0, rawDebts - optimizedTo);
+    const reductionRate = Number(algoStats?.reduction_percentage || 0);
+    return { rawDebts, optimizedTo, savedPayments, reductionRate };
+  }, [algoStats]);
+
   return (
     <div className="bg-gray-50 min-h-screen">
       <Navbar />
@@ -197,6 +209,28 @@ function Analytics() {
                     <p className="text-sm text-gray-500">No contribution data available.</p>
                   )}
                 </div>
+              </div>
+            </section>
+
+            <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+              <h2 className="text-xl font-semibold text-gray-800 mb-4">⚡ Algorithm Performance</h2>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {[
+                  { label: 'Raw Debts', value: algorithmMetrics.rawDebts },
+                  { label: 'Optimized To', value: algorithmMetrics.optimizedTo },
+                  { label: 'Saved Payments', value: algorithmMetrics.savedPayments },
+                  { label: 'Reduction Rate', value: `${algorithmMetrics.reductionRate.toFixed(1)}%` },
+                ].map((card) => (
+                  <div key={card.label} className="rounded-xl bg-indigo-600 p-4 text-white">
+                    <p className="text-xs uppercase tracking-wide text-indigo-100">{card.label}</p>
+                    <p className="mt-2 text-3xl font-bold">{card.value}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 space-y-2 text-sm text-gray-700">
+                <p>Phase 1 (Mutual Netting): eliminated {Number(algoStats?.phase1_eliminated || 0)} debts</p>
+                <p>Phase 2 (Greedy MCF): resolved in {Number(algoStats?.phase2_resolved || 0)} transactions</p>
+                <p className="font-mono text-xs text-gray-500">Algorithm: {algoStats?.algorithm_used || 'Combined: Mutual Netting + Greedy MCF'}</p>
               </div>
             </section>
 

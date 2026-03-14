@@ -64,6 +64,8 @@ export const getBalances = (groupId) => api.get(`/groups/${groupId}/balances`);
 
 // Get optimized settlement suggestions.
 export const getSuggested = (groupId) => api.get(`/groups/${groupId}/settlements/suggested`);
+// Fetch confirmed settlement history for a group.
+export const getSettlementHistory = (groupId) => api.get(`/groups/${groupId}/settlements/history`);
 // Create settlement and Razorpay order.
 export const createSettlement = (data) => api.post('/settlements', data);
 

@@ -2,185 +2,276 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
-import { createSettlement, getBalances, getMembers, getSuggested } from '../api';
-import DebtGraph from '../components/DebtGraph';
+import { createSettlement, getSuggested } from '../api';
 import Modal from '../components/Modal';
 import Navbar from '../components/Navbar';
 
-// Format a numeric amount to INR string.
+// Format numeric values as INR currency strings.
 function formatInr(value) {
   return `₹${Number(value || 0).toFixed(2)}`;
 }
 
-// Render settlement optimization and payment actions.
+// Build two-letter avatar initials from full name.
+function getInitials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return 'NA';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
+// Render combined-algorithm settlement suggestions with payment actions.
 function Settlement() {
   const { groupId } = useParams();
-  const [members, setMembers] = useState([]);
-  const [balances, setBalances] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [payingId, setPayingId] = useState('');
-  const [qrItem, setQrItem] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState({});
+  const [pageLoading, setPageLoading] = useState(true);
+  const [showExplanation, setShowExplanation] = useState(false);
+  const [qrModal, setQrModal] = useState({
+    open: false,
+    upi_id: '',
+    name: '',
+    amount: 0,
+  });
 
-  // Load members, balances, and optimized suggestions.
-  const loadData = async () => {
-    setLoading(true);
+  // Fetch optimized suggestions and optimization stats from backend.
+  const fetchSettlements = async () => {
+    setPageLoading(true);
     try {
-      const [membersRes, balancesRes, suggestionsRes] = await Promise.all([
-        getMembers(groupId),
-        getBalances(groupId),
-        getSuggested(groupId),
-      ]);
-      setMembers(membersRes.data || []);
-      setBalances(balancesRes.data || []);
-      setSuggestions(suggestionsRes.data || []);
-    } catch (error) {
-      toast.error(error?.response?.data?.detail || 'Failed to load settlement data');
+      const res = await getSuggested(groupId);
+      setSuggestions(res.data?.suggestions || []);
+      setStats(res.data?.stats || null);
+      setMessage(res.data?.message || '');
+    } catch (err) {
+      toast.error('Failed to load settlements');
+      setSuggestions([]);
+      setStats(null);
+      setMessage('');
     } finally {
-      setLoading(false);
+      setPageLoading(false);
     }
   };
 
-  // Fetch settlement data on mount.
+  // Trigger data load when the selected group changes.
   useEffect(() => {
-    loadData();
+    fetchSettlements();
   }, [groupId]);
 
-  // Build a map of userId to net balance for graph view.
-  const balanceMap = useMemo(() => {
-    const map = {};
-    balances.forEach((item) => {
-      map[item.user_id] = Number(item.balance || 0);
-    });
-    return map;
-  }, [balances]);
+  // Compute saved payment count for display cards.
+  const savedPayments = useMemo(() => {
+    if (!stats) return 0;
+    return Math.max(0, Number(stats.without_optimization || 0) - Number(stats.with_optimization || 0));
+  }, [stats]);
 
-  // Calculate baseline and optimized transaction counts.
-  const stats = useMemo(() => {
-    const creditors = balances.filter((item) => Number(item.balance) > 0.01).length;
-    const debtors = balances.filter((item) => Number(item.balance) < -0.01).length;
-    const beforeCount = creditors * debtors;
-    const afterCount = suggestions.length;
-    const reduction = beforeCount > 0 ? Number((((beforeCount - afterCount) / beforeCount) * 100).toFixed(2)) : 0;
-    return { beforeCount, afterCount, reduction };
-  }, [balances, suggestions]);
-
-  // Build UPI URI for direct payment QR code.
-  const getUpiLink = (item) => {
-    return `upi://pay?pa=${encodeURIComponent(item.to_upi_id || '')}&pn=${encodeURIComponent(item.to_user_name)}&am=${Number(item.amount).toFixed(2)}&cu=INR`;
+  // Build a UPI deep-link URI for QR-based payment.
+  const buildUpiLink = (toUpiId, toUserName, amount) => {
+    return `upi://pay?pa=${encodeURIComponent(toUpiId || '')}&pn=${encodeURIComponent(
+      toUserName || ''
+    )}&am=${Number(amount || 0).toFixed(2)}&cu=INR&tn=SplitSmart`;
   };
 
-  // Open Razorpay checkout for selected settlement.
-  const payNow = async (item) => {
-    setPayingId(`${item.from_user_id}-${item.to_user_id}`);
+  // Open modal with QR data for the selected settlement suggestion.
+  const openQrModal = (item) => {
+    setQrModal({
+      open: true,
+      upi_id: item.to_upi_id || '',
+      name: item.to_user_name || '',
+      amount: Number(item.amount || 0),
+    });
+  };
+
+  // Reset QR modal state and close the modal UI.
+  const closeQrModal = () => {
+    setQrModal({ open: false, upi_id: '', name: '', amount: 0 });
+  };
+
+  // Start Razorpay checkout for the selected optimized payment.
+  const onPayNow = async (suggestion) => {
+    setLoading((prev) => ({ ...prev, [suggestion.from_user_id]: true }));
     try {
-      const response = await createSettlement({
+      const createRes = await createSettlement({
         group_id: groupId,
-        from_user_id: item.from_user_id,
-        to_user_id: item.to_user_id,
-        amount: Number(item.amount),
+        from_user_id: suggestion.from_user_id,
+        to_user_id: suggestion.to_user_id,
+        amount: Number(suggestion.amount || 0).toFixed(2),
       });
 
-      const orderId = response.data.razorpay_order_id;
-      const key = import.meta.env.VITE_RAZORPAY_KEY_ID;
-      if (!key) {
-        toast.error('Razorpay key is not configured');
+      const { razorpay_order_id } = createRes.data || {};
+      if (!razorpay_order_id) {
+        toast.error('Unable to create Razorpay order');
         return;
       }
-      const options = {
-        key,
-        amount: Math.round(Number(item.amount) * 100),
-        currency: 'INR',
-        name: 'Splitora',
-        description: `Settlement payment to ${item.to_user_name}`,
-        order_id: orderId,
-        handler: async () => {
-          toast.success('Payment successful! Settlement will sync shortly.');
-          await loadData();
-        },
-        prefill: {
-          name: item.from_user_name,
-        },
-      };
-
       if (!window.Razorpay) {
         toast.error('Razorpay SDK not loaded');
         return;
       }
 
-      const razorpay = new window.Razorpay(options);
-      razorpay.open();
-    } catch (error) {
-      toast.error(error?.response?.data?.detail || 'Failed to initiate payment');
+      const rzp = new window.Razorpay({
+        key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+        order_id: razorpay_order_id,
+        amount: Math.round(Number(suggestion.amount || 0) * 100),
+        currency: 'INR',
+        name: 'SplitSmart — Logic Lords',
+        description: `${suggestion.from_user_name} settles with ${suggestion.to_user_name}`,
+        theme: { color: '#4F46E5' },
+        prefill: {
+          name: suggestion.from_user_name,
+          contact: '',
+        },
+        handler: function handler() {
+          toast.success('Payment successful! 🎉');
+          fetchSettlements();
+        },
+        modal: {
+          ondismiss: () => toast('Payment cancelled', { icon: '⚠️' }),
+        },
+      });
+      rzp.open();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to start payment');
     } finally {
-      setPayingId('');
+      setLoading((prev) => ({ ...prev, [suggestion.from_user_id]: false }));
     }
   };
 
   return (
     <div className="bg-gray-50 min-h-screen">
       <Navbar />
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        <h1 className="text-2xl font-bold text-gray-800">💸 Settle Up</h1>
+      <main className="pt-20 bg-gray-50 min-h-screen p-6 max-w-3xl mx-auto space-y-6">
+        <h1 className="text-2xl font-bold text-gray-800">Settlement</h1>
 
-        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <p className="text-sm text-gray-500">Without optimization</p>
-            <p className="text-lg font-semibold text-gray-800">{stats.beforeCount} transactions needed</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-500">With Splitora</p>
-            <p className="text-lg font-semibold text-gray-800">{stats.afterCount} transactions</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-500">Reduction</p>
-            <p className="text-lg font-semibold text-green-600">{stats.reduction.toFixed(2)}%</p>
-          </div>
-        </section>
+        {pageLoading ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-6 text-sm text-gray-600">Loading optimized settlements...</div>
+        ) : (
+          <>
+            {stats ? (
+              <section className="bg-indigo-50 border border-indigo-200 rounded-2xl p-6">
+                <p className="text-lg font-bold text-indigo-900">⚡ SplitSmart Optimization</p>
+                <div className="mt-4 space-y-2 text-sm">
+                  <p className="text-red-600 line-through">
+                    Without optimization: {Number(stats.without_optimization || 0)} transactions
+                  </p>
+                  <p className="text-indigo-700">↓ reduced to ↓</p>
+                  <p className="text-gray-700">
+                    Phase 1 (Mutual Netting): eliminated {Number(stats.phase1_eliminated || 0)} debts
+                  </p>
+                  <p className="text-gray-700">
+                    Phase 2 (Greedy MCF): resolved in {Number(stats.phase2_resolved || 0)} steps
+                  </p>
+                  <p className="text-indigo-700">↓ reduced to ↓</p>
+                  <p className="text-green-700 font-bold">
+                    With SplitSmart: {Number(stats.with_optimization || 0)} transactions ✅
+                  </p>
+                </div>
 
-        <DebtGraph members={members} balances={balanceMap} suggestions={suggestions} mode="after" />
+                <p className="mt-4 text-2xl font-extrabold text-indigo-700">
+                  You save {savedPayments} unnecessary payments ({Number(stats.reduction_percentage || 0).toFixed(1)}% reduction)
+                </p>
+                <p className="mt-2 text-xs text-gray-500 font-mono">
+                  Algorithm: {stats.algorithm_used || 'Combined: Mutual Netting + Greedy MCF'}
+                </p>
+                {message ? <p className="mt-2 text-sm text-gray-700">{message}</p> : null}
+              </section>
+            ) : null}
 
-        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4">Suggested Settlements</h2>
-          {loading ? (
-            <p className="text-sm text-gray-500">Loading suggestions...</p>
-          ) : suggestions.length === 0 ? (
-            <p className="text-sm text-green-700">🎉 All debts cleared! Great job team.</p>
-          ) : (
-            <div className="space-y-3">
-              {suggestions.map((item) => (
-                <div key={`${item.from_user_id}-${item.to_user_id}`} className="border border-gray-100 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
+            <section>
+              <button
+                type="button"
+                onClick={() => setShowExplanation((prev) => !prev)}
+                className="text-sm font-medium text-indigo-700 hover:text-indigo-900"
+              >
+                How does this work? {showExplanation ? '▲' : '▼'}
+              </button>
+
+              {showExplanation ? (
+                <div className="mt-3 bg-gray-50 border rounded-xl p-4 text-sm text-gray-600 space-y-4">
                   <div>
-                    <p className="text-sm text-gray-700">
-                      <strong>{item.from_user_name}</strong> → <strong>{item.to_user_name}</strong>
+                    <p className="font-semibold text-gray-800">Phase 1 — Mutual Debt Netting</p>
+                    <p>
+                      If A owes B and B owes A, we cancel the smaller and keep only the net difference. Eliminates circular debts before solving.
                     </p>
-                    <p className="text-indigo-600 text-xl font-semibold">{formatInr(item.amount)}</p>
-                    <p className="text-sm text-gray-500">UPI: {item.to_upi_id || 'Not provided'}</p>
                   </div>
-                  <div className="flex gap-2">
-                    <button type="button" onClick={() => setQrItem(item)} className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-xl" disabled={!item.to_upi_id}>
-                      QR Code
-                    </button>
-                    <button type="button" onClick={() => payNow(item)} disabled={payingId === `${item.from_user_id}-${item.to_user_id}`} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-medium transition-all disabled:opacity-60">
-                      {payingId === `${item.from_user_id}-${item.to_user_id}` ? 'Processing...' : 'Pay Now'}
-                    </button>
+                  <div>
+                    <p className="font-semibold text-gray-800">Phase 2 — Greedy Min Cash Flow</p>
+                    <p>
+                      Repeatedly match the biggest creditor with the biggest debtor. Settle the minimum of the two. Guarantees at most N-1 transactions for N people.
+                    </p>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
+              ) : null}
+            </section>
+
+            {suggestions.length === 0 && stats ? (
+              <section className="bg-green-50 border border-green-200 rounded-2xl p-8 text-center">
+                <h2 className="text-2xl font-bold text-green-700">🎉 All Settled Up!</h2>
+                <p className="mt-2 text-green-800">No pending payments in this group.</p>
+                <p className="mt-2 text-green-700">
+                  The group completed {Number(stats.with_optimization || 0)} transactions total using our optimization algorithm.
+                </p>
+              </section>
+            ) : (
+              <section className="space-y-4">
+                {suggestions.map((item) => {
+                  const loadKey = Boolean(loading[item.from_user_id]);
+                  return (
+                    <div key={`${item.from_user_id}-${item.to_user_id}`} className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+                      <div className="flex items-center justify-between text-sm text-gray-700">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 font-semibold">
+                            {getInitials(item.from_user_name)}
+                          </span>
+                          <span className="font-semibold">{item.from_user_name}</span>
+                        </div>
+                        <span className="text-gray-500">→</span>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-100 text-green-700 font-semibold">
+                            {getInitials(item.to_user_name)}
+                          </span>
+                          <span className="font-semibold">{item.to_user_name}</span>
+                        </div>
+                      </div>
+
+                      <p className="mt-4 text-center text-3xl font-bold text-indigo-700">{formatInr(item.amount)}</p>
+                      <p className="mt-3 text-sm text-gray-600">UPI: {item.to_upi_id || 'Not available'}</p>
+
+                      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => openQrModal(item)}
+                          disabled={!item.to_upi_id}
+                          className="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          📱 Show QR Code
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onPayNow(item)}
+                          disabled={loadKey}
+                          className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-60"
+                        >
+                          {loadKey ? 'Processing...' : '💳 Pay Now'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            )}
+          </>
+        )}
       </main>
 
-      <Modal isOpen={Boolean(qrItem)} title="Scan to Pay" onClose={() => setQrItem(null)}>
-        {qrItem ? (
-          <div className="flex flex-col items-center gap-3">
-            <QRCodeSVG value={getUpiLink(qrItem)} size={220} />
-            <p className="text-sm text-gray-500 text-center">
-              Pay {formatInr(qrItem.amount)} to {qrItem.to_user_name}
-            </p>
-          </div>
-        ) : null}
+      <Modal isOpen={qrModal.open} title="UPI QR Payment" onClose={closeQrModal}>
+        <div className="flex flex-col items-center gap-3">
+          <QRCodeSVG value={buildUpiLink(qrModal.upi_id, qrModal.name, qrModal.amount)} size={220} />
+          <p className="text-sm text-gray-600 text-center">Scan with any UPI app to pay directly</p>
+          <p className="text-sm text-gray-700 font-medium">UPI ID: {qrModal.upi_id || 'Unavailable'}</p>
+          <p className="text-sm text-gray-700">Amount: {formatInr(qrModal.amount)}</p>
+        </div>
       </Modal>
     </div>
   );
