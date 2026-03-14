@@ -5,120 +5,143 @@ from datetime import datetime
 from typing import List
 
 
+# Month name mapping for merged text like "Feb" "February"
+MONTH_MAP = {
+    "jan": "01", "feb": "02", "mar": "03",
+    "apr": "04", "may": "05", "jun": "06",
+    "jul": "07", "aug": "08", "sep": "09",
+    "oct": "10", "nov": "11", "dec": "12",
+    "january": "01", "february": "02", "march": "03",
+    "april": "04", "june": "06", "july": "07",
+    "august": "08", "september": "09", "october": "10",
+    "november": "11", "december": "12"
+}
+
+
 def parse_gpay_statement(pdf_bytes: bytes) -> List[dict]:
     """
-    Parses Google Pay PDF using word-level extraction.
-    Uses extract_words() instead of extract_text()
-    to handle PDFs where text has no spaces.
-    Groups words by Y position to reconstruct lines.
+    Parses Google Pay PDF statement.
+    Handles merged text format where pdfplumber
+    joins words without spaces.
+    Uses multiple extraction methods and strategies.
     """
 
-    # ── STEP 1: Extract words with positions ──────────
-    all_words_by_page = []
+    # ── Extract text using ALL available methods ──────
+    all_lines_set = []
+
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             for page_num, page in enumerate(pdf.pages):
 
-                # extract_words gives [{text, x0, top, ...}]
-                words = page.extract_words(
-                    x_tolerance=3,
-                    y_tolerance=3,
-                    keep_blank_chars=False,
-                    use_text_flow=True,
-                    extra_attrs=["size"]
-                )
-                all_words_by_page.append({
-                    "page":  page_num + 1,
-                    "words": words
-                })
+                # Method 1: default extract_text
+                t1 = page.extract_text() or ""
+
+                # Method 2: layout=True preserves spaces
+                try:
+                    t2 = page.extract_text(
+                        layout=True
+                    ) or ""
+                except:
+                    t2 = ""
+
+                # Method 3: extract_words and rejoin
+                try:
+                    words = page.extract_words(
+                        x_tolerance=5,
+                        y_tolerance=5
+                    )
+                    # Group by Y position
+                    y_groups = {}
+                    for w in words:
+                        y = round(w["top"] / 5) * 5
+                        if y not in y_groups:
+                            y_groups[y] = []
+                        y_groups[y].append(w["text"])
+                    t3 = "\n".join(
+                        " ".join(words)
+                        for words in sorted(
+                            y_groups.values(),
+                            key=lambda x: x
+                        )
+                    )
+                except:
+                    t3 = ""
+
+                # Collect all unique lines from all methods
+                for text in [t1, t2, t3]:
+                    for line in text.split('\n'):
+                        s = line.strip()
+                        if s and s not in all_lines_set:
+                            all_lines_set.append(s)
+
     except Exception as e:
         raise ValueError(f"Cannot read PDF: {str(e)}")
 
-    if not all_words_by_page:
+    if not all_lines_set:
         raise ValueError("PDF is empty or unreadable")
 
-    # ── STEP 2: Group words into lines by Y position ──
-    # Words within 3px vertical distance = same line
-    all_lines = []
-    for page_data in all_words_by_page:
-        words = page_data["words"]
-        if not words:
-            continue
-
-        # Sort words by top (Y position) then left (X)
-        words_sorted = sorted(
-            words,
-            key=lambda w: (round(w["top"] / 3) * 3, w["x0"])
-        )
-
-        # Group by Y position (same line = within 3px)
-        lines_dict = {}
-        for word in words_sorted:
-            y_key = round(word["top"] / 3) * 3
-            if y_key not in lines_dict:
-                lines_dict[y_key] = []
-            lines_dict[y_key].append(word["text"])
-
-        # Join words in each line with space
-        for y_key in sorted(lines_dict.keys()):
-            line_text = " ".join(lines_dict[y_key]).strip()
-            if line_text:
-                all_lines.append(line_text)
-
-    # ── STEP 3: Debug print reconstructed lines ───────
+    # Print ALL lines for debugging
     print("=" * 60)
-    print(f"PDF PARSER: {len(all_lines)} reconstructed lines")
-    for i, line in enumerate(all_lines[:40]):
-        print(f"  [{i:03d}] {repr(line)}")
+    print(f"PARSER: Total unique lines: {len(all_lines_set)}")
+    for i, l in enumerate(all_lines_set[:50]):
+        print(f"  [{i:03d}] {repr(l)}")
     print("=" * 60)
 
-    # ── STEP 4: Normalize currency symbols ────────────
-    def normalize(line):
+    # ── Normalize currency ────────────────────────────
+    def norm(line):
+        # Replace ₹ variants with " RUPEE "
         line = line.replace('\u20b9', ' RUPEE ')
         line = line.replace('₹',      ' RUPEE ')
         line = line.replace('Rs.',    ' RUPEE ')
-        line = line.replace('Rs ',    ' RUPEE ')
-        # Clean up multiple spaces
         line = re.sub(r'\s+', ' ', line).strip()
         return line
 
-    norm_lines = [normalize(l) for l in all_lines]
+    norm_lines = [norm(l) for l in all_lines_set]
 
-    # ── STEP 5: Parse transactions ────────────────────
-    transactions  = []
-    seen_keys     = set()
-    bank_keywords = [
+    # ── Bank filter ───────────────────────────────────
+    BANKS = [
         "kalupur", "cooperative", "bank",
         "hdfc", "sbi", "icici", "axis",
         "kotak", "paytm", "nsdl", "ppi",
-        "wallet", "ltd", "airtel", "fino"
+        "ltd", "airtel", "fino", "equitas"
     ]
 
     def is_bank(name):
-        return any(kw in name.lower() for kw in bank_keywords)
+        n = name.lower()
+        return any(b in n for b in BANKS)
 
+    # ── Date parser for merged text ───────────────────
     def parse_date(text):
         """
-        Handle date formats after word reconstruction:
-        "02 Feb , 2026" or "02 Feb, 2026" or "02 Feb 2026"
+        Handles both spaced and merged date formats:
+          "04 Feb, 2026"  → spaced (after word extraction)
+          "04Feb,2026"    → merged (after extract_text)
+          "04February2026"→ fully merged
         """
-        patterns = [
-            r'(\d{1,2})\s+(\w{3,})\s*,?\s*(\d{4})'
-        ]
-        for pat in patterns:
-            m = re.search(pat, text)
-            if m:
-                day   = m.group(1).zfill(2)
-                month = m.group(2)[:3].capitalize()
-                year  = m.group(3)
-                try:
-                    dt = datetime.strptime(
-                        f"{day} {month} {year}",
-                        "%d %b %Y"
-                    )
-                    return dt.strftime("%Y-%m-%d")
-                except ValueError:
-                    continue
+        # Try spaced format first
+        m = re.search(
+            r'(\d{1,2})\s+([A-Za-z]{3,}),?\s*(\d{4})',
+            text
+        )
+        if m:
+            day   = m.group(1).zfill(2)
+            month = MONTH_MAP.get(m.group(2).lower(), "")
+            year  = m.group(3)
+            if month:
+                return f"{year}-{month}-{day}"
+
+        # Try merged format: "04Feb,2026" or "04Feb2026"
+        m = re.search(
+            r'(\d{1,2})([A-Za-z]{3,}),?\s*(\d{4})',
+            text
+        )
+        if m:
+            day   = m.group(1).zfill(2)
+            month = MONTH_MAP.get(m.group(2).lower(), "")
+            year  = m.group(3)
+            if month:
+                return f"{year}-{month}-{day}"
+
         return None
 
     def parse_time(text):
@@ -142,69 +165,89 @@ def parse_gpay_statement(pdf_bytes: bytes) -> List[dict]:
     def find_upi(lines, start):
         for j in range(start, min(start+4, len(lines))):
             m = re.search(
-                r'UPI\s*Transaction\s*ID\s*[:\s]\s*(\d+)',
+                r'UPI\s*Transaction\s*ID\s*[:\s]*(\d+)',
                 lines[j], re.IGNORECASE
             )
             if m:
                 return m.group(1)
         return ""
 
-    # ── Scan for "Paid to" in reconstructed lines ─────
-    paid_to_re = re.compile(
-        r'Paid\s+to\s+(.+)',
-        re.IGNORECASE
-    )
+    # ── STRATEGY 1: Find "Paidto" or "Paid to" ────────
+    # Handles both merged and spaced versions
+    transactions = []
+    seen_keys    = set()
 
-    # Track last seen date across lines
+    paid_patterns = [
+        # Spaced: "Paid to NAME"
+        re.compile(r'Paid\s+to\s+(.+)', re.IGNORECASE),
+        # Merged: "PaidtoNAME"
+        re.compile(r'Paidto([A-Z][^\s].+)', re.IGNORECASE),
+        # With preceding text: "PMPaidtoNAME"
+        re.compile(
+            r'[AP]M\s*Paid\s*to\s*(.+)',
+            re.IGNORECASE
+        ),
+    ]
+
     last_date = None
     last_time = "12:00 PM"
 
     for i, line in enumerate(norm_lines):
-
-        # Update last seen date
+        # Track date and time
         d = parse_date(line)
         if d:
             last_date = d
-
         t = parse_time(line)
         if t != "12:00 PM":
             last_time = t
 
-        # Look for Paid to
-        m = paid_to_re.search(line)
-        if not m:
+        # Try each paid pattern
+        matched = None
+        for pat in paid_patterns:
+            m = pat.search(line)
+            if m:
+                matched = m
+                break
+
+        if not matched:
             continue
 
-        after = m.group(1).strip()
+        after = matched.group(1).strip()
 
-        # Extract recipient and amount from remainder
-        # Amount may be on same line: "MR FITNESS RUPEE 2,000"
-        # Or on a nearby line
+        # Split recipient from amount
         if 'RUPEE' in after:
-            # Split on RUPEE
-            parts = re.split(r'\s*RUPEE\s*', after, maxsplit=1)
-            recipient  = parts[0].strip()
-            amount_str = parts[1].strip() if len(parts) > 1 else ""
+            parts     = re.split(r'\s*RUPEE\s*', after, 1)
+            recipient = parts[0].strip()
             try:
-                amount = float(amount_str.replace(',','').split()[0])
+                amount = float(
+                    parts[1].strip()
+                    .replace(',','')
+                    .split()[0]
+                )
             except:
                 amount = None
         else:
             recipient = after.strip()
             amount    = None
 
-        # Clean recipient — remove trailing junk
+        # Clean recipient name
+        # Remove anything after time pattern or RUPEE
         recipient = re.split(
-            r'\s+RUPEE|\s+UPI|\s+Paid\s+by',
-            recipient,
-            flags=re.IGNORECASE
+            r'\s+RUPEE|\s+UPI|\s+Paid\s*[bt]',
+            recipient, flags=re.IGNORECASE
         )[0].strip()
 
-        # Skip if empty or bank
-        if not recipient or is_bank(recipient):
+        # Remove trailing numbers that might be part
+        # of a merged next field
+        recipient = re.sub(r'\d{10,}$', '', recipient)
+        recipient = recipient.strip()
+
+        if not recipient or len(recipient) < 2:
+            continue
+        if is_bank(recipient):
             continue
 
-        # If no amount on same line, look nearby
+        # Find amount if not found yet
         if not amount:
             for j in range(i, min(i+5, len(norm_lines))):
                 amount = parse_amount(norm_lines[j])
@@ -214,20 +257,19 @@ def parse_gpay_statement(pdf_bytes: bytes) -> List[dict]:
         if not amount or amount <= 0:
             continue
 
-        # Use last seen date or look on same line
+        # Get date
         iso_date = parse_date(line) or last_date
         tx_time  = parse_time(line)
         if tx_time == "12:00 PM":
             tx_time = last_time
-
         if not iso_date:
             iso_date = "2026-02-01"
 
-        # Find UPI ID
+        # Get UPI
         upi_id     = find_upi(norm_lines, i)
         unique_key = (
             upi_id or
-            f"{iso_date}_{recipient}_{amount}"
+            f"{iso_date}_{recipient}_{int(amount)}"
         )
 
         if unique_key in seen_keys:
@@ -240,172 +282,134 @@ def parse_gpay_statement(pdf_bytes: bytes) -> List[dict]:
             "recipient":          recipient,
             "amount":             round(amount, 2),
             "upi_transaction_id": unique_key,
-            "raw_text":           all_lines[i]
+            "raw_text":           all_lines_set[i]
+                                  if i < len(all_lines_set)
+                                  else line
         })
 
-    # ── STEP 6: If word extraction got nothing ────────
-    # Fallback: try extract_text with layout=True
+    # ── STRATEGY 2: Parse from merged date lines ──────
+    # Lines like "04Feb,202607:26PMPaidtoMRFITNESS₹2000"
     if not transactions:
-        print("Word extraction found nothing.")
-        print("Trying layout-based extraction...")
-        transactions = _layout_fallback(pdf_bytes)
+        print("Strategy 1 found nothing, trying Strategy 2")
+        transactions = _parse_merged_lines(
+            all_lines_set, norm_lines
+        )
 
-    print(f"FINAL: Found {len(transactions)} transactions")
+    print(f"FINAL: {len(transactions)} transactions found")
     for t in transactions:
-        print(f"  {t['date']} | {t['recipient']} | ₹{t['amount']}")
+        print(
+            f"  {t['date']} | "
+            f"{t['recipient']} | "
+            f"₹{t['amount']}"
+        )
 
     transactions.sort(key=lambda x: x["date"])
     return transactions
 
 
-def _layout_fallback(pdf_bytes: bytes) -> list:
+def _parse_merged_lines(
+    original: list,
+    normalized: list
+) -> list:
     """
-    Fallback: use pdfplumber with layout=True
-    which preserves spacing better on some PDFs.
+    Strategy 2: Handles fully merged lines like:
+    "04Feb,202607:26PMPaidtoMRFITNESS RUPEE 2,000"
+    Uses character-level parsing.
     """
     transactions = []
-    bank_keywords = [
+    seen         = set()
+    BANKS        = [
         "kalupur", "cooperative", "bank",
         "hdfc", "sbi", "icici", "axis",
-        "kotak", "paytm", "ltd"
+        "kotak", "paytm", "nsdl", "ltd"
     ]
 
-    try:
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for page in pdf.pages:
-                # layout=True preserves spaces
-                text = page.extract_text(
-                    layout=True,
-                    x_density=7.25,
-                    y_density=13
-                )
-                if not text:
-                    continue
+    MONTH_MAP = {
+        "jan":"01","feb":"02","mar":"03",
+        "apr":"04","may":"05","jun":"06",
+        "jul":"07","aug":"08","sep":"09",
+        "oct":"10","nov":"11","dec":"12",
+        "january":"01","february":"02","march":"03",
+        "april":"04","june":"06","july":"07",
+        "august":"08","september":"09","october":"10",
+        "november":"11","december":"12"
+    }
 
-                lines = [
-                    l.strip() for l in text.split('\n')
-                    if l.strip()
-                ]
+    # Pattern for fully merged transaction:
+    # DD + Month + , + YYYY + HH:MM + AM/PM +
+    # Paidto + NAME + RUPEE + AMOUNT
+    full_pattern = re.compile(
+        r'(\d{1,2})'              # day
+        r'([A-Za-z]+)'            # month
+        r',?\s*'
+        r'(\d{4})'                # year
+        r'(\d{1,2}:\d{2})'       # time
+        r'([AP]M)'                # am/pm
+        r'Paid\s*to\s*'           # "Paidto" or "Paid to"
+        r'(.+?)'                  # recipient (lazy)
+        r'\s*RUPEE\s*'            # currency
+        r'([\d,]+)',              # amount
+        re.IGNORECASE
+    )
 
-                print("FALLBACK lines:")
-                for i, l in enumerate(lines[:30]):
-                    print(f"  [{i}] {repr(l)}")
+    for i, line in enumerate(normalized):
+        m = full_pattern.search(line)
+        if not m:
+            continue
 
-                # Normalize
-                def norm(l):
-                    l = l.replace('\u20b9', ' RUPEE ')
-                    l = l.replace('₹', ' RUPEE ')
-                    return re.sub(r'\s+', ' ', l).strip()
+        day       = m.group(1).zfill(2)
+        month_str = m.group(2).lower()
+        year      = m.group(3)
+        time_str  = f"{m.group(4)} {m.group(5).upper()}"
+        recipient = m.group(6).strip()
+        amt_str   = m.group(7).strip()
 
-                norm_lines = [norm(l) for l in lines]
+        month = MONTH_MAP.get(month_str, "")
+        if not month:
+            # Try 3-letter prefix
+            month = MONTH_MAP.get(month_str[:3], "")
+        if not month:
+            continue
 
-                paid_re = re.compile(
-                    r'Paid\s+to\s+(.+)',
-                    re.IGNORECASE
-                )
-                date_re = re.compile(
-                    r'(\d{1,2})\s+(\w{3})\s*,?\s*(\d{4})'
-                )
-                amt_re = re.compile(
-                    r'RUPEE\s*([\d,]+)'
-                )
-                upi_re = re.compile(
-                    r'UPI\s*Transaction\s*ID\s*[:\s]\s*(\d+)',
-                    re.IGNORECASE
-                )
+        iso_date = f"{year}-{month}-{day}"
 
-                last_date = "2026-02-01"
-                seen      = set()
+        if any(b in recipient.lower() for b in BANKS):
+            continue
 
-                for i, line in enumerate(norm_lines):
-                    dm = date_re.search(line)
-                    if dm:
-                        try:
-                            d = datetime.strptime(
-                                f"{dm.group(1).zfill(2)} "
-                                f"{dm.group(2)[:3].capitalize()} "
-                                f"{dm.group(3)}",
-                                "%d %b %Y"
-                            )
-                            last_date = d.strftime("%Y-%m-%d")
-                        except:
-                            pass
+        try:
+            amount = float(amt_str.replace(',', ''))
+        except:
+            continue
 
-                    pm = paid_re.search(line)
-                    if not pm:
-                        continue
+        if amount <= 0:
+            continue
 
-                    after = pm.group(1).strip()
-                    if any(
-                        kw in after.lower()
-                        for kw in bank_keywords
-                    ):
-                        continue
+        # Find UPI ID
+        upi_id = ""
+        for j in range(i, min(i+4, len(normalized))):
+            um = re.search(
+                r'UPI\s*Transaction\s*ID\s*[:\s]*(\d+)',
+                normalized[j], re.IGNORECASE
+            )
+            if um:
+                upi_id = um.group(1)
+                break
 
-                    # Get recipient
-                    if 'RUPEE' in after:
-                        parts     = after.split('RUPEE')
-                        recipient = parts[0].strip()
-                        try:
-                            amount = float(
-                                parts[1].strip()
-                                .replace(',','')
-                                .split()[0]
-                            )
-                        except:
-                            amount = None
-                    else:
-                        recipient = after
-                        amount    = None
+        key = upi_id or f"{iso_date}_{recipient}_{int(amount)}"
+        if key in seen:
+            continue
+        seen.add(key)
 
-                    if not amount:
-                        for j in range(
-                            i, min(i+5, len(norm_lines))
-                        ):
-                            am = amt_re.search(norm_lines[j])
-                            if am:
-                                try:
-                                    amount = float(
-                                        am.group(1)
-                                        .replace(',','')
-                                    )
-                                    break
-                                except:
-                                    pass
-
-                    if not recipient or not amount:
-                        continue
-                    if amount <= 0:
-                        continue
-
-                    upi_id = ""
-                    for j in range(
-                        i, min(i+4, len(norm_lines))
-                    ):
-                        um = upi_re.search(norm_lines[j])
-                        if um:
-                            upi_id = um.group(1)
-                            break
-
-                    key = (
-                        upi_id or
-                        f"{last_date}_{recipient}_{amount}"
-                    )
-                    if key in seen:
-                        continue
-                    seen.add(key)
-
-                    transactions.append({
-                        "date":               last_date,
-                        "time":               "12:00 PM",
-                        "recipient":          recipient,
-                        "amount":             round(amount, 2),
-                        "upi_transaction_id": key,
-                        "raw_text":           lines[i]
-                    })
-
-    except Exception as e:
-        print(f"Fallback failed: {e}")
+        transactions.append({
+            "date":               iso_date,
+            "time":               time_str,
+            "recipient":          recipient,
+            "amount":             round(amount, 2),
+            "upi_transaction_id": key,
+            "raw_text":           original[i]
+                                  if i < len(original)
+                                  else line
+        })
 
     return transactions
 
