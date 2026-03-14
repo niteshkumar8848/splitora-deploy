@@ -61,6 +61,28 @@ def get_net_balances(group_id: str, db: Session) -> dict:
 
         balances[str(user_id)] = round(float(paid) - float(owed), 2)
 
+    # Apply already confirmed settlements so paid items do not reappear
+    # in pending suggestions.
+    confirmed_settlements = (
+        db.query(
+            Settlement.from_user,
+            Settlement.to_user,
+            func.coalesce(func.sum(Settlement.amount), 0.0),
+        )
+        .filter(
+            Settlement.group_id == group_id,
+            Settlement.status == "CONFIRMED",
+        )
+        .group_by(Settlement.from_user, Settlement.to_user)
+        .all()
+    )
+    for from_user, to_user, amount in confirmed_settlements:
+        amount_value = round(float(amount or 0.0), 2)
+        from_key = str(from_user)
+        to_key = str(to_user)
+        balances[from_key] = round(float(balances.get(from_key, 0.0)) + amount_value, 2)
+        balances[to_key] = round(float(balances.get(to_key, 0.0)) - amount_value, 2)
+
     return balances
 
 
