@@ -217,34 +217,39 @@ def bulk_import_gpay_transactions(
 # Route 4 - debug endpoint to verify PDF text extraction
 @router.post("/gpay/debug-parse")
 async def debug_parse_pdf(
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user)
+    file: UploadFile = File(...)
 ):
     """
-    Debug only - returns raw text lines from PDF.
-    Use /docs to test this and verify PDF is readable.
+    Debug only — NO auth required.
+    Returns raw text extracted from PDF.
+    Use repr field to see exact characters
+    including hidden unicode symbols.
     """
     contents = await file.read()
     try:
         import pdfplumber
         import io
         lines = []
-        with pdfplumber.open(io.BytesIO(contents)) as pdf:
+        with pdfplumber.open(
+            io.BytesIO(contents)
+        ) as pdf:
             for page_num, page in enumerate(pdf.pages):
                 text = page.extract_text()
                 if text:
                     for line in text.split('\n'):
                         if line.strip():
                             lines.append({
-                                "page": page_num + 1,
-                                "line": line.strip()
+                                "page":  page_num + 1,
+                                "line":  line.strip(),
+                                "repr":  repr(line.strip())
                             })
         return {
-            "total_lines":    len(lines),
-            "first_50_lines": lines[:50],
+            "total_lines": len(lines),
+            "all_lines":   lines,
             "message": (
-                "Check these lines to verify "
-                "the PDF text is readable"
+                "Check the repr field to see exact "
+                "characters — including hidden unicode "
+                "symbols like \\u20b9 for ₹"
             )
         }
     except Exception as e:
