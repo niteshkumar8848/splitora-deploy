@@ -53,9 +53,13 @@ async def parse_gpay_pdf(
 
     if not transactions:
         raise HTTPException(
-            404,
+            422,
             "No sent transactions found in this PDF. "
-            "Make sure you uploaded a Google Pay statement."
+            "The PDF was read successfully but no "
+            "'Paid to' transactions were detected. "
+            "Please check: (1) This is a Google Pay "
+            "statement PDF, (2) The statement contains "
+            "sent payments, not just received payments."
         )
 
     total_amount = sum(t["amount"] for t in transactions)
