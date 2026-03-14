@@ -262,3 +262,92 @@ def get_settlement_history(
             )
         )
     return result
+
+
+@router.post("/settlements/{settlement_id}/confirm-manual")
+def confirm_settlement_manually(
+    settlement_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Manually confirms a settlement after payment
+    via static Razorpay link.
+    Used when dynamic checkout is not available.
+    Updates settlement status to CONFIRMED.
+    """
+
+    # Find the settlement.
+    settlement = db.query(Settlement).filter(Settlement.id == settlement_id).first()
+
+    if not settlement:
+        raise HTTPException(404, "Settlement not found")
+
+    # Verify current user is the one paying.
+    if str(settlement.from_user) != str(current_user.id):
+        raise HTTPException(403, "Only the payer can confirm this settlement")
+
+    # Check not already confirmed.
+    if str(settlement.status) == "CONFIRMED" or getattr(settlement.status, "value", None) == "CONFIRMED":
+        raise HTTPException(400, "Settlement already confirmed")
+
+    # Update to CONFIRMED.
+    settlement.status = "CONFIRMED"
+    settlement.confirmed_at = datetime.utcnow()
+    settlement.razorpay_payment_id = f"manual_{settlement_id[:8]}"
+
+    db.commit()
+    db.refresh(settlement)
+
+    # Get user names for response.
+    from_user = db.query(User).filter(User.id == settlement.from_user).first()
+    to_user = db.query(User).filter(User.id == settlement.to_user).first()
+
+    return {
+        "id": str(settlement.id),
+        "status": "CONFIRMED",
+        "amount": settlement.amount,
+        "from_user_name": from_user.name if from_user else "",
+        "to_user_name": to_user.name if to_user else "",
+        "confirmed_at": settlement.confirmed_at.isoformat() if settlement.confirmed_at else None,
+        "message": f"Settlement of ₹{float(settlement.amount):.2f} confirmed successfully!",
+    }
+
+
+@router.post("/settlements/create-with-link")
+def create_settlement_with_static_link(
+    data: SettlementCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Creates a settlement record and returns the
+    static Razorpay payment link for testing.
+    No dynamic order creation needed.
+    """
+
+    # Verify from_user is current user.
+    if data.from_user_id != str(current_user.id):
+        raise HTTPException(403, "Can only create settlement for yourself")
+
+    # Create settlement with PENDING status.
+    settlement = Settlement(
+        id=str(uuid.uuid4()),
+        group_id=data.group_id,
+        from_user=data.from_user_id,
+        to_user=data.to_user_id,
+        amount=data.amount,
+        status="PENDING",
+        created_at=datetime.utcnow(),
+    )
+    db.add(settlement)
+    db.commit()
+    db.refresh(settlement)
+
+    return {
+        "settlement_id": str(settlement.id),
+        "amount": settlement.amount,
+        "status": "PENDING",
+        "payment_link": "https://rzp.io/rzp/WJbwPea",
+        "message": f"Pay ₹{float(settlement.amount):.2f} using the payment link. Come back after payment to confirm.",
+    }
