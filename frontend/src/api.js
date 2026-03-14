@@ -78,4 +78,40 @@ export const getAnomalies = (groupId) => api.get(`/groups/${groupId}/analytics/a
 // Fetch monthly trend analytics.
 export const getTrends = (groupId) => api.get(`/groups/${groupId}/analytics/trends`);
 
+// ── GPay Import API calls ───────────────────────────
+
+/**
+ * Upload GPay PDF and parse all sent transactions
+ * Returns list of extracted transactions
+ */
+export const parseGPayPDF = (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post('/gpay/parse-pdf', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
+/**
+ * Upload GPay PDF with date filter applied server-side
+ */
+export const parseGPayPDFWithFilter = (file, fromDate, toDate) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('from_date', fromDate);
+  formData.append('to_date', toDate);
+  return api.post('/gpay/parse-pdf/filter', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
+/**
+ * Import selected and edited transactions as group expenses
+ */
+export const bulkImportGPay = (groupId, transactions) =>
+  api.post('/gpay/bulk-import', {
+    group_id: groupId,
+    transactions,
+  });
+
 export default api;

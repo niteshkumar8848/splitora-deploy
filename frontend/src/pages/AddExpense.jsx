@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { addExpense, getMembers } from '../api';
+import { useAuth } from '../context/AuthContext';
+import GPayImport from '../components/GPay/GPayImport';
 import Navbar from '../components/Navbar';
 
 // Convert number into INR string format.
@@ -24,6 +26,7 @@ function buildEqualSplits(total, members) {
 function AddExpense() {
   const { groupId } = useParams();
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitLoading, setSubmitLoading] = useState(false);
@@ -145,6 +148,22 @@ function AddExpense() {
     <div className="bg-gray-50 min-h-screen">
       <Navbar />
       <main className="max-w-4xl mx-auto px-4 py-6">
+        <GPayImport
+          groupId={groupId}
+          members={members}
+          currentUserId={currentUser?.id || ''}
+          onImportSuccess={() => {
+            toast.success('Expenses imported! Redirecting...');
+            navigate(`/groups/${groupId}`);
+          }}
+        />
+
+        <div className="relative flex items-center my-4">
+          <div className="flex-grow border-t border-gray-200" />
+          <span className="mx-4 text-xs text-gray-400 bg-gray-50 px-2">OR ADD MANUALLY</span>
+          <div className="flex-grow border-t border-gray-200" />
+        </div>
+
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <h1 className="text-2xl font-bold text-gray-800 mb-1">Add Expense</h1>
           <p className="text-sm text-gray-500 mb-6">Create a new expense and split it among members.</p>

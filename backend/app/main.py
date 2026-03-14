@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import OperationalError
 
 from app.database import Base, engine
-from app.routers import analytics, auth, expenses, groups, settlements, webhooks
+from app.routers import analytics, auth, expenses, gpay, groups, settlements, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ app.include_router(expenses.router, tags=["Expenses"])
 app.include_router(settlements.router, tags=["Settlements"])
 app.include_router(analytics.router, tags=["Analytics"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
+app.include_router(gpay.router, tags=["GPay Import"])
 
 
 # Ensure tables exist for local/dev runs when no Alembic revisions are present.
