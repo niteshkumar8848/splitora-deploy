@@ -1,403 +1,512 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import toast from 'react-hot-toast';
-import { QRCodeSVG } from 'qrcode.react';
+import { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { toast } from 'react-hot-toast'
+import { useAuth } from '../context/AuthContext'
 import {
-  confirmSettlementManually,
-  createSettlementWithLink,
   getSuggested,
-} from '../api';
-import Modal from '../components/Modal';
-import Navbar from '../components/Navbar';
+  createSettlementWithLink,
+  confirmSettlementManually,
+  getSettlementHistory
+} from '../api'
 
-const STATIC_RAZORPAY_LINK = 'https://rzp.io/rzp/WJbwPea';
+const Settlement = () => {
+  const { groupId } = useParams()
+  const navigate = useNavigate()
+  const { user: currentUser } = useAuth()
 
-// Format numeric values as INR currency strings.
-function formatInr(value) {
-  return `₹${Number(value || 0).toFixed(2)}`;
-}
+  const [suggestions, setSuggestions] = useState([])
+  const [stats, setStats] = useState(null)
+  const [history, setHistory] = useState([])
+  const [summary, setSummary] = useState(null)
+  const [loading, setLoading] = useState({})
+  const [pageLoading, setPageLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState('pending')
+  const [showExplain, setShowExplain] = useState(false)
 
-// Build two-letter avatar initials from full name.
-function getInitials(name) {
-  const parts = String(name || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (parts.length === 0) return 'NA';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-}
-
-// Render combined-algorithm settlement suggestions with payment actions.
-function Settlement() {
-  const { groupId } = useParams();
-  const [suggestions, setSuggestions] = useState([]);
-  const [stats, setStats] = useState(null);
-  const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState({});
-  const [pageLoading, setPageLoading] = useState(true);
-  const [showExplanation, setShowExplanation] = useState(false);
-  const [pendingSettlement, setPendingSettlement] = useState(null);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [qrModal, setQrModal] = useState({
-    open: false,
-    upi_id: '',
-    name: '',
-    amount: 0,
-  });
-
-  // Fetch optimized suggestions and optimization stats from backend.
-  const fetchSettlements = async () => {
-    setPageLoading(true);
+  const fetchAll = async () => {
+    /**
+     * Fetches both pending suggestions and
+     * payment history simultaneously.
+     */
+    setPageLoading(true)
     try {
-      const res = await getSuggested(groupId);
-      setSuggestions(res.data?.suggestions || []);
-      setStats(res.data?.stats || null);
-      setMessage(res.data?.message || '');
+      const [sugRes, histRes] = await Promise.all([
+        getSuggested(groupId),
+        getSettlementHistory(groupId)
+      ])
+
+      setSuggestions(sugRes.data.suggestions || [])
+      setStats(sugRes.data.stats)
+
+      setHistory(histRes.data.history || [])
+      setSummary({
+        total_expenses: histRes.data.total_expenses,
+        total_settled: histRes.data.total_settled,
+        pending: histRes.data.pending,
+        count: histRes.data.count
+      })
     } catch (err) {
-      toast.error('Failed to load settlements');
-      setSuggestions([]);
-      setStats(null);
-      setMessage('');
+      toast.error('Failed to load settlement data')
     } finally {
-      setPageLoading(false);
+      setPageLoading(false)
     }
-  };
+  }
 
-  // Trigger data load when the selected group changes.
   useEffect(() => {
-    fetchSettlements();
-  }, [groupId]);
-
-  // Compute saved payment count for display cards.
-  const savedPayments = useMemo(() => {
-    if (!stats) return 0;
-    return Math.max(0, Number(stats.without_optimization || 0) - Number(stats.with_optimization || 0));
-  }, [stats]);
-
-  // Build a UPI deep-link URI for QR-based payment.
-  const buildUpiLink = (toUpiId, toUserName, amount) => {
-    return `upi://pay?pa=${encodeURIComponent(toUpiId || '')}&pn=${encodeURIComponent(
-      toUserName || ''
-    )}&am=${Number(amount || 0).toFixed(2)}&cu=INR&tn=SplitSmart`;
-  };
-
-  // Open modal with QR data for the selected settlement suggestion.
-  const openQrModal = (item) => {
-    setQrModal({
-      open: true,
-      upi_id: item.to_upi_id || '',
-      name: item.to_user_name || '',
-      amount: Number(item.amount || 0),
-    });
-  };
-
-  // Reset QR modal state and close the modal UI.
-  const closeQrModal = () => {
-    setQrModal({ open: false, upi_id: '', name: '', amount: 0 });
-  };
+    fetchAll()
+  }, [groupId])
 
   const handlePayNow = async (suggestion) => {
     /**
-     * Step 1: Create settlement record in DB
-     * Step 2: Open Razorpay static link in new tab
-     * Step 3: Show "I have paid" confirmation modal
-     * Step 4: On confirm -> mark as CONFIRMED in DB
-     * Step 5: Refresh settlement list
+     * 1. Create settlement record (PENDING)
+     * 2. Open Razorpay static link in new tab
+     * 3. Auto-confirm settlement (CONFIRMED)
+     * 4. Refresh all data
      */
-    setLoading((prev) => ({ ...prev, [suggestion.from_user_id]: true }));
+    setLoading(prev => ({
+      ...prev,
+      [suggestion.from_user_id]: true
+    }))
 
     try {
-      // Step 1: Create settlement record.
       const res = await createSettlementWithLink({
         group_id: groupId,
         from_user_id: suggestion.from_user_id,
         to_user_id: suggestion.to_user_id,
-        amount: suggestion.amount,
-      });
+        amount: suggestion.amount
+      })
 
-      const { settlement_id, amount, payment_link } = res.data || {};
-      if (!settlement_id) {
-        toast.error('Failed to create settlement');
-        return;
-      }
+      const { settlement_id, payment_link } = res.data
 
-      // Store pending settlement for confirmation.
-      setPendingSettlement({
-        settlement_id,
-        amount: Number(amount || 0),
-        from_user_name: suggestion.from_user_name,
-        to_user_name: suggestion.to_user_name,
-      });
+      window.open(payment_link, '_blank')
 
-      // Step 2: Open Razorpay link in new tab.
-      const popup = window.open(payment_link || STATIC_RAZORPAY_LINK, '_blank');
-      if (!popup) {
-        toast.error('Popup blocked. Please allow popups and try again.');
-        return;
-      }
+      await confirmSettlementManually(settlement_id)
 
-      // Step 3: Show confirmation modal.
-      setShowConfirmModal(true);
+      toast.success(
+        `✅ ₹${suggestion.amount.toFixed(2)} paid ` +
+        `to ${suggestion.to_user_name}!`
+      )
+
+      fetchAll()
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to initiate payment');
+      toast.error(
+        err.response?.data?.detail ||
+        'Payment failed. Try again.'
+      )
     } finally {
-      setLoading((prev) => ({ ...prev, [suggestion.from_user_id]: false }));
+      setLoading(prev => ({
+        ...prev,
+        [suggestion.from_user_id]: false
+      }))
     }
-  };
-
-  const handleConfirmPayment = async () => {
-    /**
-     * Called when user clicks "I Have Paid" button.
-     * Marks the settlement as CONFIRMED in database.
-     * Refreshes the settlement list.
-     */
-    if (!pendingSettlement) return;
-    setConfirming(true);
-
-    try {
-      await confirmSettlementManually(pendingSettlement.settlement_id);
-
-      toast.success(`✅ Payment of ₹${Number(pendingSettlement.amount || 0).toFixed(2)} confirmed!`);
-
-      // Close modal and reset state.
-      setShowConfirmModal(false);
-      setPendingSettlement(null);
-
-      // Refresh settlements - list will update.
-      fetchSettlements();
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Could not confirm payment');
-    } finally {
-      setConfirming(false);
-    }
-  };
-
-  const handleCancelPayment = () => {
-    /**
-     * User dismissed without paying.
-     * Settlement stays PENDING - can retry later.
-     */
-    setShowConfirmModal(false);
-    setPendingSettlement(null);
-    toast('Payment cancelled. You can pay later.', { icon: '⚠️' });
-  };
+  }
 
   return (
-    <div className="bg-gray-50 min-h-screen">
-      <Navbar />
-      <main className="pt-20 bg-gray-50 min-h-screen p-6 max-w-3xl mx-auto space-y-6">
-        <h1 className="text-2xl font-bold text-gray-800">Settlement</h1>
+    <div className="pt-20 bg-gray-50 min-h-screen">
+      <div className="max-w-2xl mx-auto p-6">
+        <button
+          onClick={() => navigate(`/groups/${groupId}`)}
+          className="flex items-center gap-2 text-gray-500
+               hover:text-gray-700 mb-6 text-sm"
+        >
+          ← Back to Group
+        </button>
 
-        {pageLoading ? (
-          <div className="bg-white rounded-xl border border-gray-200 p-6 text-sm text-gray-600">Loading optimized settlements...</div>
-        ) : (
-          <>
-            {stats ? (
-              <section className="bg-indigo-50 border border-indigo-200 rounded-2xl p-6">
-                <p className="text-lg font-bold text-indigo-900">⚡ SplitSmart Optimization</p>
-                <div className="mt-4 space-y-2 text-sm">
-                  <p className="text-red-600 line-through">
-                    Without optimization: {Number(stats.without_optimization || 0)} transactions
-                  </p>
-                  <p className="text-indigo-700">↓ reduced to ↓</p>
-                  <p className="text-gray-700">
-                    Phase 1 (Mutual Netting): eliminated {Number(stats.phase1_eliminated || 0)} debts
-                  </p>
-                  <p className="text-gray-700">
-                    Phase 2 (Greedy MCF): resolved in {Number(stats.phase2_resolved || 0)} steps
-                  </p>
-                  <p className="text-indigo-700">↓ reduced to ↓</p>
-                  <p className="text-green-700 font-bold">
-                    With SplitSmart: {Number(stats.with_optimization || 0)} transactions ✅
-                  </p>
+        <h1 className="text-2xl font-bold text-gray-800 mb-6">
+          💸 Settle Up
+        </h1>
+
+        {summary && (
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            <div className="bg-white rounded-2xl p-4
+                      border border-gray-100 text-center">
+              <div className="text-xs text-gray-500 mb-1">
+                Total Expenses
+              </div>
+              <div className="text-lg font-bold text-gray-800">
+                ₹{summary.total_expenses.toFixed(2)}
+              </div>
+            </div>
+            <div className="bg-green-50 rounded-2xl p-4
+                      border border-green-100 text-center">
+              <div className="text-xs text-green-600 mb-1">
+                Total Settled
+              </div>
+              <div className="text-lg font-bold text-green-700">
+                ₹{summary.total_settled.toFixed(2)}
+              </div>
+            </div>
+            <div className="bg-red-50 rounded-2xl p-4
+                      border border-red-100 text-center">
+              <div className="text-xs text-red-500 mb-1">
+                Still Pending
+              </div>
+              <div className="text-lg font-bold text-red-600">
+                ₹{summary.pending.toFixed(2)}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {stats && suggestions.length > 0 && (
+          <div className="bg-indigo-50 border border-indigo-200
+                    rounded-2xl p-5 mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-lg">⚡</span>
+              <span className="font-semibold text-indigo-700">
+                SplitSmart Optimization
+              </span>
+            </div>
+            <div className="flex items-center gap-6">
+              <div className="text-center">
+                <div className="text-2xl font-bold
+                          text-red-400 line-through">
+                  {stats.without_optimization}
                 </div>
-
-                <p className="mt-4 text-2xl font-extrabold text-indigo-700">
-                  You save {savedPayments} unnecessary payments ({Number(stats.reduction_percentage || 0).toFixed(1)}% reduction)
-                </p>
-                <p className="mt-2 text-xs text-gray-500 font-mono">
-                  Algorithm: {stats.algorithm_used || 'Combined: Mutual Netting + Greedy MCF'}
-                </p>
-                {message ? <p className="mt-2 text-sm text-gray-700">{message}</p> : null}
-              </section>
-            ) : null}
-
-            <section>
-              <button
-                type="button"
-                onClick={() => setShowExplanation((prev) => !prev)}
-                className="text-sm font-medium text-indigo-700 hover:text-indigo-900"
-              >
-                How does this work? {showExplanation ? '▲' : '▼'}
-              </button>
-
-              {showExplanation ? (
-                <div className="mt-3 bg-gray-50 border rounded-xl p-4 text-sm text-gray-600 space-y-4">
-                  <div>
-                    <p className="font-semibold text-gray-800">Phase 1 — Mutual Debt Netting</p>
-                    <p>
-                      If A owes B and B owes A, we cancel the smaller and keep only the net difference. Eliminates circular debts before solving.
-                    </p>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-gray-800">Phase 2 — Greedy Min Cash Flow</p>
-                    <p>
-                      Repeatedly match the biggest creditor with the biggest debtor. Settle the minimum of the two. Guarantees at most N-1 transactions for N people.
-                    </p>
-                  </div>
+                <div className="text-xs text-gray-500">
+                  Without optimization
                 </div>
-              ) : null}
-            </section>
+              </div>
+              <div className="text-2xl text-indigo-400">→</div>
+              <div className="text-center">
+                <div className="text-2xl font-bold
+                          text-green-600">
+                  {stats.with_optimization}
+                </div>
+                <div className="text-xs text-gray-500">
+                  With SplitSmart
+                </div>
+              </div>
+              <div className="ml-auto bg-indigo-600 text-white
+                        px-3 py-1 rounded-full text-sm
+                        font-semibold">
+                {stats.reduction_percentage}% less
+              </div>
+            </div>
 
-            {suggestions.length === 0 && stats ? (
-              <section className="bg-green-50 border border-green-200 rounded-2xl p-8 text-center">
-                <h2 className="text-2xl font-bold text-green-700">🎉 All Settled Up!</h2>
-                <p className="mt-2 text-green-800">No pending payments in this group.</p>
-                <p className="mt-2 text-green-700">
-                  The group completed {Number(stats.with_optimization || 0)} transactions total using our optimization algorithm.
+            <button
+              onClick={() => setShowExplain(!showExplain)}
+              className="mt-3 text-xs text-indigo-500
+                   hover:text-indigo-700"
+            >
+              How does this work? {showExplain ? '▲' : '▼'}
+            </button>
+            {showExplain && (
+              <div className="mt-3 text-xs text-gray-600
+                        bg-white rounded-xl p-3
+                        border border-indigo-100">
+                <p className="mb-2">
+                  <strong>Phase 1 — Mutual Netting:</strong>{' '}
+                  Cancels circular debts between members.
                 </p>
-              </section>
+                <p>
+                  <strong>Phase 2 — Greedy MCF:</strong>{' '}
+                  Matches the largest creditor with the largest
+                  debtor repeatedly until all balances = zero.
+                  Guarantees at most N-1 transactions for
+                  N people.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-2 mb-6">
+          <button
+            onClick={() => setActiveTab('pending')}
+            className={`flex-1 py-2 rounded-xl text-sm
+                  font-medium transition-all
+                  ${activeTab === 'pending'
+              ? 'bg-indigo-600 text-white'
+              : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            Pending {suggestions.length > 0
+              ? `(${suggestions.length})`
+              : ''}
+          </button>
+          <button
+            onClick={() => setActiveTab('history')}
+            className={`flex-1 py-2 rounded-xl text-sm
+                  font-medium transition-all
+                  ${activeTab === 'history'
+              ? 'bg-indigo-600 text-white'
+              : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            Payment History {history.length > 0
+              ? `(${history.length})`
+              : ''}
+          </button>
+        </div>
+
+        {activeTab === 'pending' && (
+          <div>
+            {pageLoading ? (
+              <div className="text-center py-12 text-gray-400">
+                Loading...
+              </div>
+            ) : suggestions.length === 0 ? (
+              <div className="bg-green-50 border
+                        border-green-200 rounded-2xl
+                        p-10 text-center">
+                <div className="text-5xl mb-3">🎉</div>
+                <h3 className="text-lg font-bold
+                         text-green-700 mb-1">
+                  All Settled Up!
+                </h3>
+                <p className="text-sm text-green-600">
+                  No pending payments in this group.
+                </p>
+                {history.length > 0 && (
+                  <button
+                    onClick={() => setActiveTab('history')}
+                    className="mt-4 text-sm text-indigo-600
+                         hover:underline"
+                  >
+                    View payment history →
+                  </button>
+                )}
+              </div>
             ) : (
-              <section className="space-y-4">
-                {suggestions.map((item) => {
-                  const loadKey = Boolean(loading[item.from_user_id]);
+              <div className="space-y-4">
+                {suggestions.map((s, idx) => {
+                  const isMyPayment =
+                    s.from_user_id === currentUser?.id
+                  const isLoading =
+                    loading[s.from_user_id]
+
                   return (
-                    <div key={`${item.from_user_id}-${item.to_user_id}`} className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-                      <div className="flex items-center justify-between text-sm text-gray-700">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 font-semibold">
-                            {getInitials(item.from_user_name)}
+                    <div
+                      key={idx}
+                      className={`bg-white rounded-2xl
+                            border p-5 transition-all
+                            ${isMyPayment
+                          ? 'border-indigo-200 shadow-sm'
+                          : 'border-gray-100'
+                        }`}
+                    >
+                      {isMyPayment && (
+                        <div className="mb-3">
+                          <span className="bg-indigo-100
+                                     text-indigo-600
+                                     text-xs font-semibold
+                                     px-3 py-1 rounded-full">
+                            Your payment
                           </span>
-                          <span className="font-semibold">{item.from_user_name}</span>
                         </div>
-                        <span className="text-gray-500">→</span>
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-100 text-green-700 font-semibold">
-                            {getInitials(item.to_user_name)}
-                          </span>
-                          <span className="font-semibold">{item.to_user_name}</span>
+                      )}
+
+                      <div className="flex items-center
+                                gap-3 mb-4">
+                        <div className="w-10 h-10 rounded-full
+                                  bg-red-100 flex items-center
+                                  justify-center font-semibold
+                                  text-red-600 text-sm
+                                  flex-shrink-0">
+                          {s.from_user_name
+                            .split(' ')
+                            .map(n => n[0])
+                            .join('')
+                            .slice(0, 2)
+                            .toUpperCase()
+                          }
+                        </div>
+                        <div className="flex-1">
+                          <div className="text-sm font-semibold
+                                    text-gray-800">
+                            {s.from_user_name}
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            pays
+                          </div>
+                        </div>
+                        <div className="text-gray-300 text-xl">
+                          →
+                        </div>
+                        <div className="flex-1 text-right">
+                          <div className="text-sm font-semibold
+                                    text-gray-800">
+                            {s.to_user_name}
+                          </div>
+                          {s.to_upi_id && (
+                            <div className="text-xs text-gray-400">
+                              {s.to_upi_id}
+                            </div>
+                          )}
+                        </div>
+                        <div className="w-10 h-10 rounded-full
+                                  bg-green-100 flex items-center
+                                  justify-center font-semibold
+                                  text-green-600 text-sm
+                                  flex-shrink-0">
+                          {s.to_user_name
+                            .split(' ')
+                            .map(n => n[0])
+                            .join('')
+                            .slice(0, 2)
+                            .toUpperCase()
+                          }
                         </div>
                       </div>
 
-                      <p className="mt-4 text-center text-3xl font-bold text-indigo-700">{formatInr(item.amount)}</p>
-                      <p className="mt-3 text-sm text-gray-600">UPI: {item.to_upi_id || 'Not available'}</p>
+                      <div className="text-center mb-4">
+                        <div className="text-3xl font-bold
+                                  text-indigo-600">
+                          ₹{s.amount.toFixed(2)}
+                        </div>
+                      </div>
 
-                      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {isMyPayment ? (
                         <button
-                          type="button"
-                          onClick={() => openQrModal(item)}
-                          disabled={!item.to_upi_id}
-                          className="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          onClick={() => handlePayNow(s)}
+                          disabled={isLoading}
+                          className="w-full bg-indigo-600
+                               hover:bg-indigo-700
+                               text-white py-3 rounded-xl
+                               font-semibold transition-all
+                               disabled:opacity-60
+                               flex items-center
+                               justify-center gap-2"
                         >
-                          📱 Show QR Code
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handlePayNow(item)}
-                          disabled={loadKey}
-                          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-medium transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                        >
-                          {loadKey ? (
+                          {isLoading ? (
                             <>
-                              <span className="animate-spin">⏳</span>
-                              Processing...
+                              <span className="animate-spin">
+                                ⏳
+                              </span>
+                              Processing payment...
                             </>
                           ) : (
-                            <>💳 Pay ₹{Number(item.amount || 0).toFixed(2)}</>
+                            <>
+                              💳 Pay ₹{s.amount.toFixed(2)}
+                              via Razorpay
+                            </>
                           )}
                         </button>
+                      ) : (
+                        <div className="w-full bg-gray-100
+                                  text-gray-400 py-3
+                                  rounded-xl text-sm
+                                  text-center">
+                          ⏳ Waiting for{' '}
+                          {s.from_user_name.split(' ')[0]}
+                          {' '}to pay
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'history' && (
+          <div>
+            {history.length === 0 ? (
+              <div className="bg-white rounded-2xl border
+                        border-gray-100 p-10 text-center">
+                <div className="text-4xl mb-3">📋</div>
+                <p className="text-gray-500 text-sm">
+                  No payments made yet.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {history.map((h, idx) => (
+                  <div
+                    key={idx}
+                    className="bg-white rounded-2xl border
+                         border-gray-100 p-4"
+                  >
+                    <div className="flex items-center
+                              justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-green-500 text-lg">
+                          ✅
+                        </span>
+                        <span className="text-sm font-semibold
+                                   text-gray-800">
+                          Payment Confirmed
+                        </span>
+                      </div>
+                      <span className="text-lg font-bold
+                                 text-green-600">
+                        ₹{h.amount.toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2
+                              mb-3 text-sm text-gray-600">
+                      <div className="w-8 h-8 rounded-full
+                                bg-red-100 text-red-600
+                                flex items-center
+                                justify-center text-xs
+                                font-bold flex-shrink-0">
+                        {h.from_user_name
+                          .split(' ')
+                          .map(n => n[0])
+                          .join('')
+                          .slice(0, 2)
+                          .toUpperCase()
+                        }
+                      </div>
+                      <span className="font-medium text-gray-800">
+                        {h.from_user_name}
+                      </span>
+                      <span className="text-gray-400 text-xs">
+                        paid
+                      </span>
+                      <div className="w-8 h-8 rounded-full
+                                bg-green-100 text-green-600
+                                flex items-center
+                                justify-center text-xs
+                                font-bold flex-shrink-0">
+                        {h.to_user_name
+                          .split(' ')
+                          .map(n => n[0])
+                          .join('')
+                          .slice(0, 2)
+                          .toUpperCase()
+                        }
+                      </div>
+                      <span className="font-medium text-gray-800">
+                        {h.to_user_name}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center
+                              justify-between pt-3
+                              border-t border-gray-100">
+                      <div className="text-xs text-gray-400">
+                        📅{' '}
+                        {h.confirmed_at
+                          ? new Date(h.confirmed_at)
+                            .toLocaleDateString('en-IN', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })
+                          : '-'
+                        }
+                      </div>
+                      <div className="text-xs font-mono
+                                text-gray-400 bg-gray-50
+                                px-2 py-1 rounded-lg">
+                        {h.payment_ref}
                       </div>
                     </div>
-                  );
-                })}
-              </section>
+                  </div>
+                ))}
+              </div>
             )}
-          </>
-        )}
-      </main>
-
-      <Modal isOpen={qrModal.open} title="UPI QR Payment" onClose={closeQrModal}>
-        <div className="flex flex-col items-center gap-3">
-          <QRCodeSVG value={buildUpiLink(qrModal.upi_id, qrModal.name, qrModal.amount)} size={220} />
-          <p className="text-sm text-gray-600 text-center">Scan with any UPI app to pay directly</p>
-          <p className="text-sm text-gray-700 font-medium">UPI ID: {qrModal.upi_id || 'Unavailable'}</p>
-          <p className="text-sm text-gray-700">Amount: {formatInr(qrModal.amount)}</p>
-        </div>
-      </Modal>
-
-      {showConfirmModal && pendingSettlement && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
-            <div className="text-center mb-6">
-              <div className="text-5xl mb-3">💳</div>
-              <h3 className="text-lg font-bold text-gray-800 mb-1">Complete Your Payment</h3>
-              <p className="text-sm text-gray-500">A Razorpay payment page has opened in a new tab</p>
-            </div>
-
-            <div className="bg-indigo-50 rounded-xl p-4 mb-6">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm text-gray-600">You are paying</span>
-                <span className="font-bold text-indigo-600 text-lg">₹{Number(pendingSettlement.amount || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm text-gray-600">From</span>
-                <span className="text-sm font-medium text-gray-800">{pendingSettlement.from_user_name}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">To</span>
-                <span className="text-sm font-medium text-gray-800">{pendingSettlement.to_user_name}</span>
-              </div>
-            </div>
-
-            <div className="space-y-2 mb-6">
-              <div className="flex items-center gap-3 text-sm text-gray-600">
-                <div className="w-6 h-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
-                  1
-                </div>
-                <span>Complete payment on the Razorpay page that opened</span>
-              </div>
-              <div className="flex items-center gap-3 text-sm text-gray-600">
-                <div className="w-6 h-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
-                  2
-                </div>
-                <span>Come back here and click "I Have Paid" below</span>
-              </div>
-              <div className="flex items-center gap-3 text-sm text-gray-600">
-                <div className="w-6 h-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
-                  3
-                </div>
-                <span>Balance updates automatically</span>
-              </div>
-            </div>
-
-            <button
-              onClick={() => window.open(STATIC_RAZORPAY_LINK, '_blank')}
-              className="w-full border border-indigo-300 text-indigo-600 py-2 rounded-xl text-sm hover:bg-indigo-50 mb-3 transition-all"
-            >
-              🔗 Reopen Payment Page
-            </button>
-
-            <button
-              onClick={handleConfirmPayment}
-              disabled={confirming}
-              className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-semibold disabled:opacity-50 transition-all mb-3"
-            >
-              {confirming ? '⏳ Confirming...' : '✅ I Have Paid - Confirm Settlement'}
-            </button>
-
-            <button
-              onClick={handleCancelPayment}
-              className="w-full text-gray-400 text-sm hover:text-gray-600 py-2 transition-all"
-            >
-              I haven't paid yet - cancel
-            </button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
-  );
+  )
 }
 
-export default Settlement;
+export default Settlement

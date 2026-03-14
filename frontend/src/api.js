@@ -64,8 +64,6 @@ export const getBalances = (groupId) => api.get(`/groups/${groupId}/balances`);
 
 // Get optimized settlement suggestions.
 export const getSuggested = (groupId) => api.get(`/groups/${groupId}/settlements/suggested`);
-// Fetch confirmed settlement history for a group.
-export const getSettlementHistory = (groupId) => api.get(`/groups/${groupId}/settlements/history`);
 // Create settlement and Razorpay order.
 export const createSettlement = (data) => api.post('/settlements', data);
 
@@ -114,16 +112,18 @@ export const bulkImportGPay = (groupId, transactions) =>
     transactions,
   });
 
-/**
- * Create settlement and get static payment link
- */
+// ── Settlement payment functions ────────────────────
+
+/** Create settlement + get Razorpay link */
 export const createSettlementWithLink = (data) =>
   api.post('/settlements/create-with-link', data);
 
-/**
- * Manually confirm settlement after static link payment
- */
-export const confirmSettlementManually = (settlementId) =>
-  api.post(`/settlements/${settlementId}/confirm-manual`);
+/** Confirm settlement after payment */
+export const confirmSettlementManually = (id) =>
+  api.post(`/settlements/${id}/confirm-manual`);
+
+/** Get full payment history for a group */
+export const getSettlementHistory = (groupId) =>
+  api.get(`/groups/${groupId}/settlements/history`);
 
 export default api;
