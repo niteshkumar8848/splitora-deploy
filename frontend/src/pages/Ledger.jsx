@@ -131,7 +131,7 @@ export default function Ledger() {
     // ── HELPER: safe number format ───────────────────
     const fmtAmt = (val) => {
       const n = parseFloat(val)
-      return Number.isNaN(n) ? '₹0.00' : `₹${n.toFixed(2)}`
+      return Number.isNaN(n) ? 'INR 0.00' : `INR ${n.toFixed(2)}`
     }
 
     const fmtDate = (dateStr) => {
