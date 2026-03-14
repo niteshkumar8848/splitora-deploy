@@ -10,6 +10,8 @@ import {
 import Modal from '../components/Modal';
 import Navbar from '../components/Navbar';
 
+const STATIC_RAZORPAY_LINK = 'https://rzp.io/rzp/WJbwPea';
+
 // Format numeric values as INR currency strings.
 function formatInr(value) {
   return `₹${Number(value || 0).toFixed(2)}`;
@@ -116,6 +118,10 @@ function Settlement() {
       });
 
       const { settlement_id, amount, payment_link } = res.data || {};
+      if (!settlement_id) {
+        toast.error('Failed to create settlement');
+        return;
+      }
 
       // Store pending settlement for confirmation.
       setPendingSettlement({
@@ -126,7 +132,11 @@ function Settlement() {
       });
 
       // Step 2: Open Razorpay link in new tab.
-      window.open(payment_link, '_blank');
+      const popup = window.open(payment_link || STATIC_RAZORPAY_LINK, '_blank');
+      if (!popup) {
+        toast.error('Popup blocked. Please allow popups and try again.');
+        return;
+      }
 
       // Step 3: Show confirmation modal.
       setShowConfirmModal(true);
@@ -363,7 +373,7 @@ function Settlement() {
             </div>
 
             <button
-              onClick={() => window.open('https://rzp.io/rzp/WJbwPea', '_blank')}
+              onClick={() => window.open(STATIC_RAZORPAY_LINK, '_blank')}
               className="w-full border border-indigo-300 text-indigo-600 py-2 rounded-xl text-sm hover:bg-indigo-50 mb-3 transition-all"
             >
               🔗 Reopen Payment Page

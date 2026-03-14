@@ -287,9 +287,24 @@ def confirm_settlement_manually(
     if str(settlement.from_user) != str(current_user.id):
         raise HTTPException(403, "Only the payer can confirm this settlement")
 
-    # Check not already confirmed.
-    if str(settlement.status) == "CONFIRMED" or getattr(settlement.status, "value", None) == "CONFIRMED":
+    # Verify payer still belongs to this group.
+    member = (
+        db.query(GroupMember)
+        .filter(
+            GroupMember.group_id == settlement.group_id,
+            GroupMember.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not member:
+        raise HTTPException(403, "Not a group member")
+
+    # Only pending settlements can be confirmed manually.
+    current_status = settlement.status.value if hasattr(settlement.status, "value") else str(settlement.status)
+    if current_status == "CONFIRMED":
         raise HTTPException(400, "Settlement already confirmed")
+    if current_status != "PENDING":
+        raise HTTPException(400, f"Cannot confirm settlement in {current_status} state")
 
     # Update to CONFIRMED.
     settlement.status = "CONFIRMED"
@@ -330,13 +345,39 @@ def create_settlement_with_static_link(
     if data.from_user_id != str(current_user.id):
         raise HTTPException(403, "Can only create settlement for yourself")
 
+    if str(data.from_user_id) == str(data.to_user_id):
+        raise HTTPException(400, "Payer and receiver cannot be the same")
+
+    amount_value = round(float(data.amount or 0), 2)
+    if amount_value <= 0:
+        raise HTTPException(400, "Amount must be greater than 0")
+
+    # Ensure group exists.
+    group = db.query(Group).filter(Group.id == data.group_id).first()
+    if not group:
+        raise HTTPException(404, "Group not found")
+
+    # Ensure both payer and receiver belong to group.
+    payer_member = (
+        db.query(GroupMember)
+        .filter(GroupMember.group_id == data.group_id, GroupMember.user_id == data.from_user_id)
+        .first()
+    )
+    receiver_member = (
+        db.query(GroupMember)
+        .filter(GroupMember.group_id == data.group_id, GroupMember.user_id == data.to_user_id)
+        .first()
+    )
+    if not payer_member or not receiver_member:
+        raise HTTPException(400, "Both users must be members of the group")
+
     # Create settlement with PENDING status.
     settlement = Settlement(
         id=str(uuid.uuid4()),
         group_id=data.group_id,
         from_user=data.from_user_id,
         to_user=data.to_user_id,
-        amount=data.amount,
+        amount=amount_value,
         status="PENDING",
         created_at=datetime.utcnow(),
     )
