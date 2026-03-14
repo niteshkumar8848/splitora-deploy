@@ -10,6 +10,7 @@ const Login = lazy(() => import('./pages/Login'));
 const Register = lazy(() => import('./pages/Register'));
 const Settlement = lazy(() => import('./pages/Settlement'));
 const AddExpense = lazy(() => import('./pages/AddExpense'));
+const Profile = lazy(() => import('./pages/Profile'));
 
 // Configure public and protected routes for the app.
 function App() {
@@ -25,6 +26,14 @@ function App() {
           element={
             <PrivateRoute>
               <Dashboard />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <PrivateRoute>
+              <Profile />
             </PrivateRoute>
           }
         />

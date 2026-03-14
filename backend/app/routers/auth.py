@@ -5,7 +5,7 @@ from app.core.dependencies import get_current_user
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.database import get_db
 from app.models.models import User
-from app.schemas.user import LoginRequest, Token, UserCreate, UserOut
+from app.schemas.user import LoginRequest, PasswordChangeRequest, Token, UserCreate, UserOut, UserProfileUpdate
 
 router = APIRouter()
 
@@ -50,3 +50,60 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 def me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+# Update the current authenticated user's profile fields.
+@router.put("/me", response_model=UserOut)
+def update_me(
+    payload: UserProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    name = payload.name.strip()
+    phone = payload.phone.strip()
+    upi_id = payload.upi_id.strip() if payload.upi_id else None
+
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name cannot be empty")
+    if not phone:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone cannot be empty")
+
+    phone_owner = (
+        db.query(User)
+        .filter(User.phone == phone, User.id != current_user.id)
+        .first()
+    )
+    if phone_owner:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone already registered")
+
+    current_user.name = name
+    current_user.phone = phone
+    current_user.upi_id = upi_id
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
+# Change current authenticated user's login password.
+@router.put("/me/password")
+def change_password(
+    payload: PasswordChangeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not verify_password(payload.current_password, current_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+    if len(payload.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 8 characters long",
+        )
+    if verify_password(payload.new_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from current password",
+        )
+
+    current_user.password_hash = get_password_hash(payload.new_password)
+    db.commit()
+    return {"message": "Password updated successfully"}

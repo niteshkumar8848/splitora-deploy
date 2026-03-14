@@ -30,6 +30,11 @@ function Navbar() {
                 Dashboard
               </Link>
             )}
+            {location.pathname !== '/profile' && (
+              <Link to="/profile" className="btn-secondary">
+                Profile
+              </Link>
+            )}
             <span className="text-sm text-muted-foreground font-medium px-3">
               {user?.name}
             </span>
@@ -56,6 +61,15 @@ function Navbar() {
                   onClick={() => setMobileOpen(false)}
                 >
                   Dashboard
+                </Link>
+              )}
+              {location.pathname !== '/profile' && (
+                <Link
+                  to="/profile"
+                  className="btn-secondary w-full justify-start"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Profile
                 </Link>
               )}
               <Button 

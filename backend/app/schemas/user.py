@@ -32,3 +32,14 @@ class Token(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class UserProfileUpdate(BaseModel):
+    name: str
+    phone: str
+    upi_id: Optional[str] = None
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str

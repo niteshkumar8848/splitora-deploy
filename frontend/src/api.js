@@ -39,6 +39,10 @@ export const registerUser = (data) => api.post('/auth/register', data);
 export const loginUser = (data) => api.post('/auth/login', data);
 // Fetch authenticated user profile.
 export const getMe = () => api.get('/auth/me');
+// Update authenticated user profile fields.
+export const updateMe = (data) => api.put('/auth/me', data);
+// Update authenticated user password.
+export const changePassword = (data) => api.put('/auth/me/password', data);
 
 // Create a new group.
 export const createGroup = (data) => api.post('/groups', data);
