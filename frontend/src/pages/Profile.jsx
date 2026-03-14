@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { changePassword, updateMe } from '../api';
-import Footer from '../components/Footer';
 import Navbar from '../components/Navbar';
 import { Button } from '../components/ui/Button';
 import { useAuth } from '../context/AuthContext';
@@ -138,7 +137,6 @@ function Profile() {
           </form>
         </section>
       </main>
-      <Footer />
     </div>
   );
 }
