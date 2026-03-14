@@ -7,430 +7,407 @@ from typing import List
 
 def parse_gpay_statement(pdf_bytes: bytes) -> List[dict]:
     """
-    Parses Google Pay PDF statement.
-    Extracts ONLY sent (Paid to) transactions.
-    Handles all possible ₹ symbol encodings.
+    Parses Google Pay PDF using word-level extraction.
+    Uses extract_words() instead of extract_text()
+    to handle PDFs where text has no spaces.
+    Groups words by Y position to reconstruct lines.
     """
 
-    transactions = []
-
-    # Step 1: Extract raw text from all pages
+    # ── STEP 1: Extract words with positions ──────────
+    all_words_by_page = []
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            all_lines = []
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                    for line in text.split('\n'):
-                        stripped = line.strip()
-                        if stripped:
-                            all_lines.append(stripped)
+            for page_num, page in enumerate(pdf.pages):
+
+                # extract_words gives [{text, x0, top, ...}]
+                words = page.extract_words(
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    keep_blank_chars=False,
+                    use_text_flow=True,
+                    extra_attrs=["size"]
+                )
+                all_words_by_page.append({
+                    "page":  page_num + 1,
+                    "words": words
+                })
     except Exception as e:
         raise ValueError(f"Cannot read PDF: {str(e)}")
 
-    if not all_lines:
-        raise ValueError(
-            "PDF appears to be empty or unreadable"
+    if not all_words_by_page:
+        raise ValueError("PDF is empty or unreadable")
+
+    # ── STEP 2: Group words into lines by Y position ──
+    # Words within 3px vertical distance = same line
+    all_lines = []
+    for page_data in all_words_by_page:
+        words = page_data["words"]
+        if not words:
+            continue
+
+        # Sort words by top (Y position) then left (X)
+        words_sorted = sorted(
+            words,
+            key=lambda w: (round(w["top"] / 3) * 3, w["x0"])
         )
 
-    # ── DEBUG: print first 30 lines to Render logs ──
-    # This helps diagnose what the PDF actually contains
-    print("=== GPay PDF Parser Debug ===")
-    print(f"Total lines extracted: {len(all_lines)}")
-    for i, line in enumerate(all_lines[:30]):
-        print(f"Line {i:02d}: {repr(line)}")
-    print("=== End Debug ===")
+        # Group by Y position (same line = within 3px)
+        lines_dict = {}
+        for word in words_sorted:
+            y_key = round(word["top"] / 3) * 3
+            if y_key not in lines_dict:
+                lines_dict[y_key] = []
+            lines_dict[y_key].append(word["text"])
 
-    # Step 2: Normalize ₹ symbol variations
-    # pdfplumber may extract ₹ as any of these:
-    normalized_lines = []
-    for line in all_lines:
-        normalized = line
-        # Replace all known ₹ symbol variants with
-        # a standard placeholder "RUPEE"
-        normalized = normalized.replace('\u20b9', 'RUPEE')
-        normalized = normalized.replace('₹',      'RUPEE')
-        normalized = normalized.replace('Rs.',     'RUPEE')
-        normalized = normalized.replace('Rs ',     'RUPEE')
-        normalized = normalized.replace('INR ',    'RUPEE')
-        normalized_lines.append(normalized)
+        # Join words in each line with space
+        for y_key in sorted(lines_dict.keys()):
+            line_text = " ".join(lines_dict[y_key]).strip()
+            if line_text:
+                all_lines.append(line_text)
 
-    # Step 3: Try multiple regex strategies
-    transactions = _strategy_single_line(
-        normalized_lines, all_lines
+    # ── STEP 3: Debug print reconstructed lines ───────
+    print("=" * 60)
+    print(f"PDF PARSER: {len(all_lines)} reconstructed lines")
+    for i, line in enumerate(all_lines[:40]):
+        print(f"  [{i:03d}] {repr(line)}")
+    print("=" * 60)
+
+    # ── STEP 4: Normalize currency symbols ────────────
+    def normalize(line):
+        line = line.replace('\u20b9', ' RUPEE ')
+        line = line.replace('₹',      ' RUPEE ')
+        line = line.replace('Rs.',    ' RUPEE ')
+        line = line.replace('Rs ',    ' RUPEE ')
+        # Clean up multiple spaces
+        line = re.sub(r'\s+', ' ', line).strip()
+        return line
+
+    norm_lines = [normalize(l) for l in all_lines]
+
+    # ── STEP 5: Parse transactions ────────────────────
+    transactions  = []
+    seen_keys     = set()
+    bank_keywords = [
+        "kalupur", "cooperative", "bank",
+        "hdfc", "sbi", "icici", "axis",
+        "kotak", "paytm", "nsdl", "ppi",
+        "wallet", "ltd", "airtel", "fino"
+    ]
+
+    def is_bank(name):
+        return any(kw in name.lower() for kw in bank_keywords)
+
+    def parse_date(text):
+        """
+        Handle date formats after word reconstruction:
+        "02 Feb , 2026" or "02 Feb, 2026" or "02 Feb 2026"
+        """
+        patterns = [
+            r'(\d{1,2})\s+(\w{3,})\s*,?\s*(\d{4})'
+        ]
+        for pat in patterns:
+            m = re.search(pat, text)
+            if m:
+                day   = m.group(1).zfill(2)
+                month = m.group(2)[:3].capitalize()
+                year  = m.group(3)
+                try:
+                    dt = datetime.strptime(
+                        f"{day} {month} {year}",
+                        "%d %b %Y"
+                    )
+                    return dt.strftime("%Y-%m-%d")
+                except ValueError:
+                    continue
+        return None
+
+    def parse_time(text):
+        m = re.search(
+            r'(\d{1,2}:\d{2})\s*([AP]M)',
+            text, re.IGNORECASE
+        )
+        if m:
+            return f"{m.group(1)} {m.group(2).upper()}"
+        return "12:00 PM"
+
+    def parse_amount(text):
+        m = re.search(r'RUPEE\s*([\d,]+)', text)
+        if m:
+            try:
+                return float(m.group(1).replace(',', ''))
+            except:
+                pass
+        return None
+
+    def find_upi(lines, start):
+        for j in range(start, min(start+4, len(lines))):
+            m = re.search(
+                r'UPI\s*Transaction\s*ID\s*[:\s]\s*(\d+)',
+                lines[j], re.IGNORECASE
+            )
+            if m:
+                return m.group(1)
+        return ""
+
+    # ── Scan for "Paid to" in reconstructed lines ─────
+    paid_to_re = re.compile(
+        r'Paid\s+to\s+(.+)',
+        re.IGNORECASE
     )
 
-    if not transactions:
-        print("Strategy 1 failed, trying strategy 2...")
-        transactions = _strategy_multiline(
-            normalized_lines, all_lines
+    # Track last seen date across lines
+    last_date = None
+    last_time = "12:00 PM"
+
+    for i, line in enumerate(norm_lines):
+
+        # Update last seen date
+        d = parse_date(line)
+        if d:
+            last_date = d
+
+        t = parse_time(line)
+        if t != "12:00 PM":
+            last_time = t
+
+        # Look for Paid to
+        m = paid_to_re.search(line)
+        if not m:
+            continue
+
+        after = m.group(1).strip()
+
+        # Extract recipient and amount from remainder
+        # Amount may be on same line: "MR FITNESS RUPEE 2,000"
+        # Or on a nearby line
+        if 'RUPEE' in after:
+            # Split on RUPEE
+            parts = re.split(r'\s*RUPEE\s*', after, maxsplit=1)
+            recipient  = parts[0].strip()
+            amount_str = parts[1].strip() if len(parts) > 1 else ""
+            try:
+                amount = float(amount_str.replace(',','').split()[0])
+            except:
+                amount = None
+        else:
+            recipient = after.strip()
+            amount    = None
+
+        # Clean recipient — remove trailing junk
+        recipient = re.split(
+            r'\s+RUPEE|\s+UPI|\s+Paid\s+by',
+            recipient,
+            flags=re.IGNORECASE
+        )[0].strip()
+
+        # Skip if empty or bank
+        if not recipient or is_bank(recipient):
+            continue
+
+        # If no amount on same line, look nearby
+        if not amount:
+            for j in range(i, min(i+5, len(norm_lines))):
+                amount = parse_amount(norm_lines[j])
+                if amount:
+                    break
+
+        if not amount or amount <= 0:
+            continue
+
+        # Use last seen date or look on same line
+        iso_date = parse_date(line) or last_date
+        tx_time  = parse_time(line)
+        if tx_time == "12:00 PM":
+            tx_time = last_time
+
+        if not iso_date:
+            iso_date = "2026-02-01"
+
+        # Find UPI ID
+        upi_id     = find_upi(norm_lines, i)
+        unique_key = (
+            upi_id or
+            f"{iso_date}_{recipient}_{amount}"
         )
 
+        if unique_key in seen_keys:
+            continue
+        seen_keys.add(unique_key)
+
+        transactions.append({
+            "date":               iso_date,
+            "time":               tx_time,
+            "recipient":          recipient,
+            "amount":             round(amount, 2),
+            "upi_transaction_id": unique_key,
+            "raw_text":           all_lines[i]
+        })
+
+    # ── STEP 6: If word extraction got nothing ────────
+    # Fallback: try extract_text with layout=True
     if not transactions:
-        print("Strategy 2 failed, trying strategy 3...")
-        transactions = _strategy_flexible(
-            normalized_lines, all_lines
-        )
+        print("Word extraction found nothing.")
+        print("Trying layout-based extraction...")
+        transactions = _layout_fallback(pdf_bytes)
 
-    print(f"Total transactions found: {len(transactions)}")
+    print(f"FINAL: Found {len(transactions)} transactions")
+    for t in transactions:
+        print(f"  {t['date']} | {t['recipient']} | ₹{t['amount']}")
 
-    # Sort by date
     transactions.sort(key=lambda x: x["date"])
     return transactions
 
 
-def _strategy_single_line(
-    normalized_lines: list,
-    original_lines: list
-) -> list:
+def _layout_fallback(pdf_bytes: bytes) -> list:
     """
-    Strategy 1: Each transaction is on ONE line.
-    Format: "04 Feb, 2026 07:26 PM Paid to NAME RUPEEAMOUNT"
-    This is the most common GPay PDF format.
-    """
-    transactions = []
-    upi_pattern = re.compile(
-        r'UPI\s*Transaction\s*ID[:\s]+(\d+)',
-        re.IGNORECASE
-    )
-
-    # Pattern: date time "Paid to" name amount
-    sent_pattern = re.compile(
-        r'(\d{1,2}\s+\w{3},?\s+\d{4})'   # date
-        r'\s+'
-        r'(\d{1,2}:\d{2}\s*[AP]M)'        # time
-        r'\s+'
-        r'Paid\s+to\s+'                    # "Paid to"
-        r'(.+?)'                           # recipient
-        r'\s+RUPEE([\d,]+)',               # amount
-        re.IGNORECASE
-    )
-
-    bank_keywords = [
-        "kalupur", "cooperative", "bank", "hdfc",
-        "sbi", "icici", "axis", "kotak", "paytm",
-        "yes bank", "nsdl", "ppi", "wallet",
-        "airtel", "fino", "equitas", "ltd"
-    ]
-
-    for i, line in enumerate(normalized_lines):
-        match = sent_pattern.search(line)
-        if not match:
-            continue
-
-        raw_date  = match.group(1).strip()
-        raw_time  = match.group(2).strip()
-        recipient = match.group(3).strip()
-        raw_amt   = match.group(4).strip()
-
-        # Skip bank transfers
-        if any(
-            kw in recipient.lower()
-            for kw in bank_keywords
-        ):
-            continue
-
-        # Parse date
-        iso_date = _parse_date(raw_date)
-        if not iso_date:
-            continue
-
-        # Parse amount
-        try:
-            amount = float(raw_amt.replace(",", ""))
-        except ValueError:
-            continue
-
-        if amount <= 0:
-            continue
-
-        # Find UPI ID on next lines
-        upi_id = _find_upi_id(
-            normalized_lines, i, upi_pattern
-        )
-        unique_key = upi_id or f"{iso_date}_{i}"
-
-        transactions.append({
-            "date":               iso_date,
-            "time":               raw_time,
-            "recipient":          recipient,
-            "amount":             amount,
-            "upi_transaction_id": unique_key,
-            "raw_text":           original_lines[i]
-        })
-
-    return _deduplicate(transactions)
-
-
-def _strategy_multiline(
-    normalized_lines: list,
-    original_lines: list
-) -> list:
-    """
-    Strategy 2: Transaction spans multiple lines.
-    Line N:   "04 Feb, 2026"
-    Line N+1: "07:26 PM"
-    Line N+2: "Paid to MR FITNESS"
-    Line N+3: "UPI Transaction ID: xxx"
-    Line N+4: "Paid by bank..."
-    Line N+5: "RUPEE2,000"
+    Fallback: use pdfplumber with layout=True
+    which preserves spacing better on some PDFs.
     """
     transactions = []
     bank_keywords = [
-        "kalupur", "cooperative", "bank", "hdfc",
-        "sbi", "icici", "axis", "kotak", "paytm",
-        "ltd", "nsdl", "ppi", "wallet"
+        "kalupur", "cooperative", "bank",
+        "hdfc", "sbi", "icici", "axis",
+        "kotak", "paytm", "ltd"
     ]
 
-    date_pattern = re.compile(
-        r'^(\d{1,2}\s+\w{3},?\s+\d{4})$'
-    )
-    time_pattern = re.compile(
-        r'^(\d{1,2}:\d{2}\s*[AP]M)$'
-    )
-    paid_to_pattern = re.compile(
-        r'^Paid\s+to\s+(.+)$',
-        re.IGNORECASE
-    )
-    amount_pattern = re.compile(
-        r'^RUPEE([\d,]+)$'
-    )
-    upi_pattern = re.compile(
-        r'UPI\s*Transaction\s*ID[:\s]+(\d+)',
-        re.IGNORECASE
-    )
-
-    i = 0
-    while i < len(normalized_lines):
-        line = normalized_lines[i]
-
-        date_match = date_pattern.match(line)
-        if not date_match:
-            i += 1
-            continue
-
-        # Look ahead for time, direction, amount
-        if i + 4 >= len(normalized_lines):
-            i += 1
-            continue
-
-        time_match = time_pattern.match(
-            normalized_lines[i + 1]
-        )
-        if not time_match:
-            i += 1
-            continue
-
-        paid_match = paid_to_pattern.match(
-            normalized_lines[i + 2]
-        )
-        if not paid_match:
-            i += 1
-            continue
-
-        recipient = paid_match.group(1).strip()
-        if any(
-            kw in recipient.lower()
-            for kw in bank_keywords
-        ):
-            i += 1
-            continue
-
-        # Find amount in next few lines
-        amount    = None
-        upi_id    = ""
-        for j in range(i + 3, min(i + 8,
-                                   len(normalized_lines))):
-            upi_m = upi_pattern.search(normalized_lines[j])
-            if upi_m:
-                upi_id = upi_m.group(1)
-
-            amt_m = amount_pattern.match(normalized_lines[j])
-            if amt_m:
-                try:
-                    amount = float(
-                        amt_m.group(1).replace(",", "")
-                    )
-                except ValueError:
-                    pass
-
-        if amount is None or amount <= 0:
-            i += 1
-            continue
-
-        iso_date = _parse_date(date_match.group(1))
-        if not iso_date:
-            i += 1
-            continue
-
-        unique_key = upi_id or f"{iso_date}_{i}"
-        transactions.append({
-            "date":               iso_date,
-            "time":               time_match.group(1),
-            "recipient":          recipient,
-            "amount":             amount,
-            "upi_transaction_id": unique_key,
-            "raw_text":           original_lines[i]
-        })
-        i += 1
-
-    return _deduplicate(transactions)
-
-
-def _strategy_flexible(
-    normalized_lines: list,
-    original_lines: list
-) -> list:
-    """
-    Strategy 3: Most flexible — search for any line
-    containing both 'Paid to' and a RUPEE amount.
-    Does not require date/time on same line.
-    Last resort fallback.
-    """
-    transactions = []
-    bank_keywords = [
-        "kalupur", "cooperative", "bank", "hdfc",
-        "sbi", "icici", "axis", "kotak", "paytm",
-        "ltd", "nsdl", "ppi", "wallet"
-    ]
-
-    # Match any line with "Paid to NAME RUPEEAMOUNT"
-    flexible_pattern = re.compile(
-        r'Paid\s+to\s+(.+?)\s+RUPEE([\d,]+)',
-        re.IGNORECASE
-    )
-    date_pattern = re.compile(
-        r'(\d{1,2}\s+\w{3},?\s+\d{4})'
-    )
-    time_pattern = re.compile(
-        r'(\d{1,2}:\d{2}\s*[AP]M)'
-    )
-    upi_pattern = re.compile(
-        r'UPI\s*Transaction\s*ID[:\s]+(\d+)',
-        re.IGNORECASE
-    )
-
-    last_date = "2026-01-01"
-    last_time = "12:00 PM"
-
-    for i, line in enumerate(normalized_lines):
-        # Track most recent date seen
-        date_match = date_pattern.search(line)
-        if date_match:
-            parsed = _parse_date(date_match.group(1))
-            if parsed:
-                last_date = parsed
-
-        time_match = time_pattern.search(line)
-        if time_match:
-            last_time = time_match.group(1)
-
-        # Look for Paid to transaction
-        match = flexible_pattern.search(line)
-        if not match:
-            continue
-
-        recipient = match.group(1).strip()
-        raw_amt   = match.group(2).strip()
-
-        if any(
-            kw in recipient.lower()
-            for kw in bank_keywords
-        ):
-            continue
-
-        try:
-            amount = float(raw_amt.replace(",", ""))
-        except ValueError:
-            continue
-
-        if amount <= 0:
-            continue
-
-        upi_id = _find_upi_id(
-            normalized_lines, i, upi_pattern
-        )
-        unique_key = upi_id or f"{last_date}_{i}"
-
-        transactions.append({
-            "date":               last_date,
-            "time":               last_time,
-            "recipient":          recipient,
-            "amount":             amount,
-            "upi_transaction_id": unique_key,
-            "raw_text":           original_lines[i]
-        })
-
-    return _deduplicate(transactions)
-
-
-def _parse_date(raw_date: str) -> str:
-    """
-    Converts GPay date string to ISO format YYYY-MM-DD.
-    Handles: "04 Feb, 2026" and "4 Feb, 2026"
-    and "04 Feb 2026" (without comma)
-    """
-    cleaned = re.sub(r'\s+', ' ', raw_date.strip())
-    formats = [
-        "%d %b, %Y",
-        "%d %b %Y",
-        "%-d %b, %Y",
-        "%-d %b %Y",
-    ]
-    for fmt in formats:
-        try:
-            dt = datetime.strptime(cleaned, fmt)
-            return dt.strftime("%Y-%m-%d")
-        except ValueError:
-            continue
-
-    # Last resort: try with zero-padded day
     try:
-        parts = cleaned.replace(",", "").split()
-        if len(parts) == 3:
-            day   = parts[0].zfill(2)
-            month = parts[1]
-            year  = parts[2]
-            dt = datetime.strptime(
-                f"{day} {month} {year}", "%d %b %Y"
-            )
-            return dt.strftime("%Y-%m-%d")
-    except Exception:
-        pass
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                # layout=True preserves spaces
+                text = page.extract_text(
+                    layout=True,
+                    x_density=7.25,
+                    y_density=13
+                )
+                if not text:
+                    continue
 
-    return ""
+                lines = [
+                    l.strip() for l in text.split('\n')
+                    if l.strip()
+                ]
 
+                print("FALLBACK lines:")
+                for i, l in enumerate(lines[:30]):
+                    print(f"  [{i}] {repr(l)}")
 
-def _find_upi_id(
-    lines: list,
-    start_idx: int,
-    pattern: re.Pattern
-) -> str:
-    """
-    Looks for UPI Transaction ID in the next 3 lines
-    after a transaction line.
-    """
-    for j in range(start_idx + 1,
-                   min(start_idx + 4, len(lines))):
-        match = pattern.search(lines[j])
-        if match:
-            return match.group(1).strip()
-    return ""
+                # Normalize
+                def norm(l):
+                    l = l.replace('\u20b9', ' RUPEE ')
+                    l = l.replace('₹', ' RUPEE ')
+                    return re.sub(r'\s+', ' ', l).strip()
 
+                norm_lines = [norm(l) for l in lines]
 
-def _deduplicate(transactions: list) -> list:
-    """
-    Removes duplicate transactions by UPI ID.
-    Keeps first occurrence.
-    """
-    seen = set()
-    unique = []
-    for t in transactions:
-        key = t["upi_transaction_id"]
-        if key not in seen:
-            seen.add(key)
-            unique.append(t)
-    return unique
+                paid_re = re.compile(
+                    r'Paid\s+to\s+(.+)',
+                    re.IGNORECASE
+                )
+                date_re = re.compile(
+                    r'(\d{1,2})\s+(\w{3})\s*,?\s*(\d{4})'
+                )
+                amt_re = re.compile(
+                    r'RUPEE\s*([\d,]+)'
+                )
+                upi_re = re.compile(
+                    r'UPI\s*Transaction\s*ID\s*[:\s]\s*(\d+)',
+                    re.IGNORECASE
+                )
+
+                last_date = "2026-02-01"
+                seen      = set()
+
+                for i, line in enumerate(norm_lines):
+                    dm = date_re.search(line)
+                    if dm:
+                        try:
+                            d = datetime.strptime(
+                                f"{dm.group(1).zfill(2)} "
+                                f"{dm.group(2)[:3].capitalize()} "
+                                f"{dm.group(3)}",
+                                "%d %b %Y"
+                            )
+                            last_date = d.strftime("%Y-%m-%d")
+                        except:
+                            pass
+
+                    pm = paid_re.search(line)
+                    if not pm:
+                        continue
+
+                    after = pm.group(1).strip()
+                    if any(
+                        kw in after.lower()
+                        for kw in bank_keywords
+                    ):
+                        continue
+
+                    # Get recipient
+                    if 'RUPEE' in after:
+                        parts     = after.split('RUPEE')
+                        recipient = parts[0].strip()
+                        try:
+                            amount = float(
+                                parts[1].strip()
+                                .replace(',','')
+                                .split()[0]
+                            )
+                        except:
+                            amount = None
+                    else:
+                        recipient = after
+                        amount    = None
+
+                    if not amount:
+                        for j in range(
+                            i, min(i+5, len(norm_lines))
+                        ):
+                            am = amt_re.search(norm_lines[j])
+                            if am:
+                                try:
+                                    amount = float(
+                                        am.group(1)
+                                        .replace(',','')
+                                    )
+                                    break
+                                except:
+                                    pass
+
+                    if not recipient or not amount:
+                        continue
+                    if amount <= 0:
+                        continue
+
+                    upi_id = ""
+                    for j in range(
+                        i, min(i+4, len(norm_lines))
+                    ):
+                        um = upi_re.search(norm_lines[j])
+                        if um:
+                            upi_id = um.group(1)
+                            break
+
+                    key = (
+                        upi_id or
+                        f"{last_date}_{recipient}_{amount}"
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                    transactions.append({
+                        "date":               last_date,
+                        "time":               "12:00 PM",
+                        "recipient":          recipient,
+                        "amount":             round(amount, 2),
+                        "upi_transaction_id": key,
+                        "raw_text":           lines[i]
+                    })
+
+    except Exception as e:
+        print(f"Fallback failed: {e}")
+
+    return transactions
 
 
 def filter_by_date_range(
@@ -438,10 +415,7 @@ def filter_by_date_range(
     from_date: str,
     to_date: str
 ) -> List[dict]:
-    """
-    Filters transactions to inclusive date range.
-    Dates must be YYYY-MM-DD format.
-    """
+    """Filter by inclusive date range (YYYY-MM-DD)"""
     try:
         start = datetime.strptime(from_date, "%Y-%m-%d")
         end   = datetime.strptime(to_date,   "%Y-%m-%d")
