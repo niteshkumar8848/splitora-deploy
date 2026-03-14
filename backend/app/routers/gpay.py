@@ -189,3 +189,41 @@ def bulk_import_gpay_transactions(
             f"Total: ₹{round(total_amount, 2)}"
         ),
     )
+
+
+@router.post("/gpay/debug-parse")
+async def debug_parse_pdf(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Debug endpoint — returns raw extracted text from PDF.
+    Use this to verify PDF text extraction is working.
+    Returns first 50 lines of extracted text.
+    """
+    contents = await file.read()
+    try:
+        import io
+
+        import pdfplumber
+
+        lines = []
+        with pdfplumber.open(io.BytesIO(contents)) as pdf:
+            for page_num, page in enumerate(pdf.pages):
+                text = page.extract_text()
+                if text:
+                    for line in text.split("\n"):
+                        if line.strip():
+                            lines.append(
+                                {
+                                    "page": page_num + 1,
+                                    "line": line.strip(),
+                                }
+                            )
+        return {
+            "total_lines": len(lines),
+            "first_50_lines": lines[:50],
+            "message": "Use these lines to verify the parser regex",
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
