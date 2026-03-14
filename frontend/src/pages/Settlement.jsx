@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
-import { createSettlement, getSuggested } from '../api';
+import {
+  confirmSettlementManually,
+  createSettlementWithLink,
+  getSuggested,
+} from '../api';
 import Modal from '../components/Modal';
 import Navbar from '../components/Navbar';
 
@@ -31,6 +35,9 @@ function Settlement() {
   const [loading, setLoading] = useState({});
   const [pageLoading, setPageLoading] = useState(true);
   const [showExplanation, setShowExplanation] = useState(false);
+  const [pendingSettlement, setPendingSettlement] = useState(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [qrModal, setQrModal] = useState({
     open: false,
     upi_id: '',
@@ -89,53 +96,82 @@ function Settlement() {
     setQrModal({ open: false, upi_id: '', name: '', amount: 0 });
   };
 
-  // Start Razorpay checkout for the selected optimized payment.
-  const onPayNow = async (suggestion) => {
+  const handlePayNow = async (suggestion) => {
+    /**
+     * Step 1: Create settlement record in DB
+     * Step 2: Open Razorpay static link in new tab
+     * Step 3: Show "I have paid" confirmation modal
+     * Step 4: On confirm -> mark as CONFIRMED in DB
+     * Step 5: Refresh settlement list
+     */
     setLoading((prev) => ({ ...prev, [suggestion.from_user_id]: true }));
+
     try {
-      const createRes = await createSettlement({
+      // Step 1: Create settlement record.
+      const res = await createSettlementWithLink({
         group_id: groupId,
         from_user_id: suggestion.from_user_id,
         to_user_id: suggestion.to_user_id,
-        amount: Number(suggestion.amount || 0).toFixed(2),
+        amount: suggestion.amount,
       });
 
-      const { razorpay_order_id } = createRes.data || {};
-      if (!razorpay_order_id) {
-        toast.error('Unable to create Razorpay order');
-        return;
-      }
-      if (!window.Razorpay) {
-        toast.error('Razorpay SDK not loaded');
-        return;
-      }
+      const { settlement_id, amount, payment_link } = res.data || {};
 
-      const rzp = new window.Razorpay({
-        key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-        order_id: razorpay_order_id,
-        amount: Math.round(Number(suggestion.amount || 0) * 100),
-        currency: 'INR',
-        name: 'SplitSmart — Logic Lords',
-        description: `${suggestion.from_user_name} settles with ${suggestion.to_user_name}`,
-        theme: { color: '#4F46E5' },
-        prefill: {
-          name: suggestion.from_user_name,
-          contact: '',
-        },
-        handler: function handler() {
-          toast.success('Payment successful! 🎉');
-          fetchSettlements();
-        },
-        modal: {
-          ondismiss: () => toast('Payment cancelled', { icon: '⚠️' }),
-        },
+      // Store pending settlement for confirmation.
+      setPendingSettlement({
+        settlement_id,
+        amount: Number(amount || 0),
+        from_user_name: suggestion.from_user_name,
+        to_user_name: suggestion.to_user_name,
       });
-      rzp.open();
+
+      // Step 2: Open Razorpay link in new tab.
+      window.open(payment_link, '_blank');
+
+      // Step 3: Show confirmation modal.
+      setShowConfirmModal(true);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to start payment');
+      toast.error(err?.response?.data?.detail || 'Failed to initiate payment');
     } finally {
       setLoading((prev) => ({ ...prev, [suggestion.from_user_id]: false }));
     }
+  };
+
+  const handleConfirmPayment = async () => {
+    /**
+     * Called when user clicks "I Have Paid" button.
+     * Marks the settlement as CONFIRMED in database.
+     * Refreshes the settlement list.
+     */
+    if (!pendingSettlement) return;
+    setConfirming(true);
+
+    try {
+      await confirmSettlementManually(pendingSettlement.settlement_id);
+
+      toast.success(`✅ Payment of ₹${Number(pendingSettlement.amount || 0).toFixed(2)} confirmed!`);
+
+      // Close modal and reset state.
+      setShowConfirmModal(false);
+      setPendingSettlement(null);
+
+      // Refresh settlements - list will update.
+      fetchSettlements();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Could not confirm payment');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const handleCancelPayment = () => {
+    /**
+     * User dismissed without paying.
+     * Settlement stays PENDING - can retry later.
+     */
+    setShowConfirmModal(false);
+    setPendingSettlement(null);
+    toast('Payment cancelled. You can pay later.', { icon: '⚠️' });
   };
 
   return (
@@ -249,11 +285,18 @@ function Settlement() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => onPayNow(item)}
+                          onClick={() => handlePayNow(item)}
                           disabled={loadKey}
-                          className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-60"
+                          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-medium transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                         >
-                          {loadKey ? 'Processing...' : '💳 Pay Now'}
+                          {loadKey ? (
+                            <>
+                              <span className="animate-spin">⏳</span>
+                              Processing...
+                            </>
+                          ) : (
+                            <>💳 Pay ₹{Number(item.amount || 0).toFixed(2)}</>
+                          )}
                         </button>
                       </div>
                     </div>
@@ -273,6 +316,76 @@ function Settlement() {
           <p className="text-sm text-gray-700">Amount: {formatInr(qrModal.amount)}</p>
         </div>
       </Modal>
+
+      {showConfirmModal && pendingSettlement && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
+            <div className="text-center mb-6">
+              <div className="text-5xl mb-3">💳</div>
+              <h3 className="text-lg font-bold text-gray-800 mb-1">Complete Your Payment</h3>
+              <p className="text-sm text-gray-500">A Razorpay payment page has opened in a new tab</p>
+            </div>
+
+            <div className="bg-indigo-50 rounded-xl p-4 mb-6">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-gray-600">You are paying</span>
+                <span className="font-bold text-indigo-600 text-lg">₹{Number(pendingSettlement.amount || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-gray-600">From</span>
+                <span className="text-sm font-medium text-gray-800">{pendingSettlement.from_user_name}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-600">To</span>
+                <span className="text-sm font-medium text-gray-800">{pendingSettlement.to_user_name}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2 mb-6">
+              <div className="flex items-center gap-3 text-sm text-gray-600">
+                <div className="w-6 h-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                  1
+                </div>
+                <span>Complete payment on the Razorpay page that opened</span>
+              </div>
+              <div className="flex items-center gap-3 text-sm text-gray-600">
+                <div className="w-6 h-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                  2
+                </div>
+                <span>Come back here and click "I Have Paid" below</span>
+              </div>
+              <div className="flex items-center gap-3 text-sm text-gray-600">
+                <div className="w-6 h-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                  3
+                </div>
+                <span>Balance updates automatically</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => window.open('https://rzp.io/rzp/WJbwPea', '_blank')}
+              className="w-full border border-indigo-300 text-indigo-600 py-2 rounded-xl text-sm hover:bg-indigo-50 mb-3 transition-all"
+            >
+              🔗 Reopen Payment Page
+            </button>
+
+            <button
+              onClick={handleConfirmPayment}
+              disabled={confirming}
+              className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-semibold disabled:opacity-50 transition-all mb-3"
+            >
+              {confirming ? '⏳ Confirming...' : '✅ I Have Paid - Confirm Settlement'}
+            </button>
+
+            <button
+              onClick={handleCancelPayment}
+              className="w-full text-gray-400 text-sm hover:text-gray-600 py-2 transition-all"
+            >
+              I haven't paid yet - cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

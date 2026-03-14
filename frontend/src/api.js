@@ -114,4 +114,16 @@ export const bulkImportGPay = (groupId, transactions) =>
     transactions,
   });
 
+/**
+ * Create settlement and get static payment link
+ */
+export const createSettlementWithLink = (data) =>
+  api.post('/settlements/create-with-link', data);
+
+/**
+ * Manually confirm settlement after static link payment
+ */
+export const confirmSettlementManually = (settlementId) =>
+  api.post(`/settlements/${settlementId}/confirm-manual`);
+
 export default api;
