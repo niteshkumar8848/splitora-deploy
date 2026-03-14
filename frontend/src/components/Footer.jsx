@@ -10,7 +10,6 @@ function Footer() {
         </div>
         <div className="text-[0.9rem] text-muted-foreground text-left md:text-right">
           <p>© {year} Splitora. All rights reserved.</p>
-          <p className="text-[0.78rem] mt-1 tracking-[0.08em] uppercase">Built for clear, calm financial collaboration</p>
         </div>
       </div>
     </footer>
