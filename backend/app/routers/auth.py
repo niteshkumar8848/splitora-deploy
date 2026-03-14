@@ -23,6 +23,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
         email=payload.email.lower(),
         phone=payload.phone.strip(),
         upi_id=payload.upi_id.strip() if payload.upi_id else None,
+        profile_image_url=None,
         password_hash=get_password_hash(payload.password),
     )
     db.add(user)
@@ -62,6 +63,7 @@ def update_me(
     name = payload.name.strip()
     phone = payload.phone.strip()
     upi_id = payload.upi_id.strip() if payload.upi_id else None
+    profile_image_url = payload.profile_image_url.strip() if payload.profile_image_url else None
 
     if not name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name cannot be empty")
@@ -75,10 +77,17 @@ def update_me(
     )
     if phone_owner:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone already registered")
+    if profile_image_url and not (
+        profile_image_url.startswith("data:image/")
+        or profile_image_url.startswith("https://")
+        or profile_image_url.startswith("http://")
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid profile image format")
 
     current_user.name = name
     current_user.phone = phone
     current_user.upi_id = upi_id
+    current_user.profile_image_url = profile_image_url
     db.commit()
     db.refresh(current_user)
     return current_user

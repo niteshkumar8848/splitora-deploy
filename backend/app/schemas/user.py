@@ -19,6 +19,7 @@ class UserOut(BaseModel):
     email: EmailStr
     phone: str
     upi_id: Optional[str] = None
+    profile_image_url: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -38,6 +39,7 @@ class UserProfileUpdate(BaseModel):
     name: str
     phone: str
     upi_id: Optional[str] = None
+    profile_image_url: Optional[str] = None
 
 
 class PasswordChangeRequest(BaseModel):

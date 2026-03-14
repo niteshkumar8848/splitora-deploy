@@ -10,6 +10,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     String,
+    Text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -44,6 +45,7 @@ class User(Base):
     phone = Column(String(20), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     upi_id = Column(String(100), nullable=True)
+    profile_image_url = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     groups_created = relationship("Group", back_populates="creator")

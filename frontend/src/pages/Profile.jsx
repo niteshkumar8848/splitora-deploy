@@ -5,11 +5,40 @@ import Navbar from '../components/Navbar';
 import { Button } from '../components/ui/Button';
 import { useAuth } from '../context/AuthContext';
 
+function resizeImageToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxSize = 240;
+        const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+        const width = Math.round(img.width * scale);
+        const height = Math.round(img.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Image processing failed'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.onerror = () => reject(new Error('Invalid image file'));
+      img.src = String(reader.result || '');
+    };
+    reader.onerror = () => reject(new Error('Unable to read image file'));
+    reader.readAsDataURL(file);
+  });
+}
+
 function Profile() {
   const { user, setUser } = useAuth();
   const [profileLoading, setProfileLoading] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
-  const [profileForm, setProfileForm] = useState({ name: '', phone: '', upi_id: '' });
+  const [profileForm, setProfileForm] = useState({ name: '', phone: '', upi_id: '', profile_image_url: '' });
   const [passwordForm, setPasswordForm] = useState({
     current_password: '',
     new_password: '',
@@ -22,8 +51,25 @@ function Profile() {
       name: user.name || '',
       phone: user.phone || '',
       upi_id: user.upi_id || '',
+      profile_image_url: user.profile_image_url || '',
     });
   }, [user]);
+
+  const onProfileImageChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please upload a valid image file');
+      return;
+    }
+    try {
+      const dataUrl = await resizeImageToDataUrl(file);
+      setProfileForm((prev) => ({ ...prev, profile_image_url: dataUrl }));
+      toast.success('Profile picture ready to save');
+    } catch {
+      toast.error('Failed to process image');
+    }
+  };
 
   const onProfileSubmit = async (event) => {
     event.preventDefault();
@@ -33,6 +79,7 @@ function Profile() {
         name: profileForm.name,
         phone: profileForm.phone,
         upi_id: profileForm.upi_id || null,
+        profile_image_url: profileForm.profile_image_url || null,
       };
       const response = await updateMe(payload);
       setUser(response.data);
@@ -78,6 +125,27 @@ function Profile() {
         <section className="section-card">
           <h2 className="text-xl font-semibold text-gray-800 mb-4">Profile Details</h2>
           <form onSubmit={onProfileSubmit} className="space-y-4">
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-full overflow-hidden bg-gray-100 border border-gray-200">
+                {profileForm.profile_image_url ? (
+                  <img src={profileForm.profile_image_url} alt="Profile" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-sm text-muted-foreground">No Photo</div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <input className="input-field" type="file" accept="image/*" onChange={onProfileImageChange} />
+                {profileForm.profile_image_url && (
+                  <button
+                    type="button"
+                    className="text-sm text-red-600"
+                    onClick={() => setProfileForm((prev) => ({ ...prev, profile_image_url: '' }))}
+                  >
+                    Remove picture
+                  </button>
+                )}
+              </div>
+            </div>
             <input
               className="input-field"
               placeholder="Full Name"

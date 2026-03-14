@@ -8,6 +8,12 @@ function Navbar() {
   const location = useLocation();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const initials = (user?.name || 'U')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('');
 
   return (
     <nav className="glass-card border-b-0 backdrop-blur-md sticky top-0 z-50 shadow-soft">
@@ -30,14 +36,16 @@ function Navbar() {
                 Dashboard
               </Link>
             )}
-            {location.pathname !== '/profile' && (
-              <Link to="/profile" className="btn-secondary">
-                Profile
-              </Link>
-            )}
-            <span className="text-sm text-muted-foreground font-medium px-3">
-              {user?.name}
-            </span>
+            <Link to="/profile" className="flex items-center gap-2 px-2 py-1.5 rounded-xl border border-input bg-white hover:bg-muted transition-colors">
+              <span className="w-9 h-9 rounded-full overflow-hidden bg-gray-100 border border-gray-200 inline-flex items-center justify-center text-xs font-semibold text-gray-600">
+                {user?.profile_image_url ? (
+                  <img src={user.profile_image_url} alt={user?.name || 'Profile'} className="w-full h-full object-cover" />
+                ) : (
+                  initials || 'U'
+                )}
+              </span>
+              <span className="text-sm text-muted-foreground font-medium">{user?.name}</span>
+            </Link>
             <Button variant="secondary" onClick={logout} className="gap-1.5">
               <LogOut className="h-4 w-4" />
               Logout
@@ -63,15 +71,20 @@ function Navbar() {
                   Dashboard
                 </Link>
               )}
-              {location.pathname !== '/profile' && (
-                <Link
-                  to="/profile"
-                  className="btn-secondary w-full justify-start"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Profile
-                </Link>
-              )}
+              <Link
+                to="/profile"
+                className="btn-secondary w-full justify-start gap-2"
+                onClick={() => setMobileOpen(false)}
+              >
+                <span className="w-6 h-6 rounded-full overflow-hidden bg-gray-100 border border-gray-200 inline-flex items-center justify-center text-[0.65rem] font-semibold text-gray-600">
+                  {user?.profile_image_url ? (
+                    <img src={user.profile_image_url} alt={user?.name || 'Profile'} className="w-full h-full object-cover" />
+                  ) : (
+                    initials || 'U'
+                  )}
+                </span>
+                My Profile
+              </Link>
               <Button 
                 variant="secondary" 
                 className="w-full justify-start gap-2"
